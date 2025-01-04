@@ -55,10 +55,24 @@ def generate_answers(model, tokenizer, question, context, num_samples=5):
         answers.append(answer)
         
         # Calculate sequence log probability
-        sequence_scores = torch.stack(outputs.scores, dim=1)
-        log_prob = torch.sum(torch.log_softmax(sequence_scores[0], dim=-1))
-        log_probs.append(log_prob.item())
-    
+        # Calculate log probabilities
+        scores = torch.stack(outputs.scores, dim=1)
+        seq_length = outputs.sequences[0, 1:].size(0)
+
+        if seq_length > scores.size(1):
+            seq_length = scores.size(1)
+            sequence = outputs.sequences[0, 1 : seq_length + 1]
+        else:
+            sequence = outputs.sequences[0, 1 : seq_length + 1]
+
+        token_probs = torch.softmax(scores[0, :seq_length], dim=-1)
+        token_log_probs = torch.log(
+            token_probs.gather(-1, sequence.unsqueeze(-1)) + 1e-10
+        )
+        log_prob = torch.sum(token_log_probs).item()
+
+        log_probs.append(log_prob)
+
     return answers, log_probs
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
