@@ -12,6 +12,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import json
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+)
 from model import (
     load_model_and_tokenizer,
     EntailmentDeberta,
