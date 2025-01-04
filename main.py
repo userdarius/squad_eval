@@ -63,6 +63,8 @@ def generate_answers(model, tokenizer, question, context, num_samples=5):
             
             # Decode the answer
             answer = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+
+            logging.info(f"Answer: {answer}")
             
             # Only append if we got a non-empty answer
             if answer:
