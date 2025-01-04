@@ -62,26 +62,36 @@ def generate_answers(
         tokenizer,
         prompt,
         num_branches=num_branches,
-        max_length=20,  # Using same max_length as original
+        max_length=20,  
     )
-
-    print(responses)
 
     # Sort responses by confidence score
     responses.sort(key=lambda x: x[1], reverse=True)
 
-    # Separate answers and probabilities and remove the prompt from answers
+    # Separate answers and probabilities
     answers = []
     log_probs = []
 
-    for response, prob in responses:
-        # Extract just the answer part after the prompt
-        answer = response[len(prompt) :].strip()
-        answers.append(answer)
-        log_probs.append(prob)
+    prompt_end_index = len(prompt.strip())
 
-        logging.info(f"Generated answer: {answer}")
-        logging.info(f"Log probability: {prob}")
+    for response, prob in responses:
+        # Extract just the answer part, making sure to handle the full response correctly
+        full_response = response.strip()
+        
+        # If the response starts with the prompt (or part of it), remove it
+        if full_response.startswith(prompt[:20]):  # Check first 20 chars to be safe
+            answer = full_response[prompt_end_index:].strip()
+        else:
+            # If response doesn't include prompt, use it as is
+            answer = full_response.strip()
+
+        # Only add non-empty answers
+        if answer:
+            answers.append(answer)
+            log_probs.append(prob)
+
+            logging.info(f"Generated answer: {answer}")
+            logging.info(f"Log probability: {prob}")
 
     return answers, log_probs
 
