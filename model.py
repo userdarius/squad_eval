@@ -99,22 +99,17 @@ def get_topk_next_tokens(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Get the top k most likely next tokens and their probabilities.
-
-    Args:
-        model: The language model
-        inputs: Tokenized inputs
-        num_branches: Number of top tokens to return
-
-    Returns:
-        Tuple of (probabilities, token indices)
     """
     with torch.no_grad():
         outputs = model(**inputs, return_dict=True)
         next_token_logits = outputs.logits[:, -1, :]
 
-    # Get probabilities and top k tokens
     probabilities = F.softmax(next_token_logits, dim=-1)
     topk_values, topk_indices = torch.topk(probabilities, num_branches)
+    
+    # Log the top token indices and their probabilities
+    for i in range(num_branches):
+        logging.info(f"Top token {i+1}: index={topk_indices[0,i].item()}, prob={topk_values[0,i].item():.4f}")
 
     return topk_values, topk_indices
 
@@ -127,20 +122,14 @@ def generate_single_branch(
 ) -> Tuple[List[str], float]:
     """
     Generate a complete response starting from the given inputs.
-
-    Args:
-        model: The language model
-        tokenizer: The tokenizer
-        inputs: Initial tokenized inputs
-        max_length: Maximum generation length
-
-    Returns:
-        Tuple of (generated tokens, average probability difference)
     """
+    logging.info("Starting single branch generation...")
+    logging.info(f"Initial input shape: {inputs['input_ids'].shape}")
+    
     response = []
     prob_diffs = []
 
-    for _ in range(max_length):
+    for step in range(max_length):
         # Get top 2 most likely tokens to calculate probability difference
         topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=2)
 
@@ -152,8 +141,16 @@ def generate_single_branch(
         next_token = topk_indices[0, 0].unsqueeze(0)
         response.append(next_token)
 
+        # Log current token and running text
+        current_token_text = tokenizer.decode(next_token)
+        logging.info(f"Step {step}: Generated token: {current_token_text} (id={next_token.item()})")
+        if step % 5 == 0:  # Log running text every 5 tokens
+            running_text = tokenizer.decode(torch.cat(response))
+            logging.info(f"Running text at step {step}: {running_text}")
+
         # Stop if we hit the end token
         if next_token.item() == tokenizer.eos_token_id:
+            logging.info("Reached end token, stopping generation")
             break
 
         # Update inputs for next iteration
@@ -170,8 +167,13 @@ def generate_single_branch(
             )
 
     # Convert token IDs to text
-    generated_text = tokenizer.decode(torch.cat(response))
+    generated_tokens = torch.cat(response)
+    generated_text = tokenizer.decode(generated_tokens)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
+    
+    logging.info(f"Final generated text length: {len(generated_text)}")
+    logging.info(f"Final generated text: '{generated_text}'")
+    logging.info(f"Average probability difference: {avg_prob_diff:.4f}")
 
     return generated_text, avg_prob_diff
 
@@ -185,28 +187,26 @@ def generate_branching_responses(
 ) -> List[Tuple[str, float]]:
     """
     Generate multiple responses by exploring different initial tokens.
-
-    Args:
-        model: The language model
-        tokenizer: The tokenizer
-        prompt: Input prompt
-        num_branches: Number of different branches to explore
-        max_length: Maximum generation length
-
-    Returns:
-        List of tuples containing (generated text, confidence score)
     """
-    logging.info(f"Generating {num_branches} branching responses for prompt: {prompt}")
+    logging.info(f"Starting branching generation with {num_branches} branches")
+    logging.info(f"Prompt: '{prompt}'")
 
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    logging.info(f"Tokenized prompt shape: {inputs['input_ids'].shape}")
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
+    
+    # Log initial token choices
+    for k in range(num_branches):
+        token_text = tokenizer.decode(topk_indices[0, k])
+        logging.info(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
 
     responses = []
     for k in range(num_branches):
+        logging.info(f"\nGenerating branch {k+1}/{num_branches}")
         # Create a new branch starting with the k-th most likely token
         branch_inputs = {
             "input_ids": torch.cat(
@@ -231,8 +231,9 @@ def generate_branching_responses(
         )
 
         responses.append((generated_text, confidence_score))
-        logging.info(
-            f"Generated branch {k+1}/{num_branches} with confidence: {confidence_score:.4f}"
-        )
+        logging.info(f"Branch {k+1} complete:")
+        logging.info(f"Generated text: '{generated_text}'")
+        logging.info(f"Confidence score: {confidence_score:.4f}")
 
+    logging.info("\nAll branches complete")
     return responses
