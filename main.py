@@ -65,6 +65,8 @@ def generate_answers(
         max_length=20,  # Using same max_length as original
     )
 
+    print(responses)
+
     # Sort responses by confidence score
     responses.sort(key=lambda x: x[1], reverse=True)
 
