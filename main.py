@@ -38,39 +38,66 @@ def generate_answers(model, tokenizer, question, context, num_samples=5):
     logging.info(f"Question: {question}")
 
     for _ in range(num_samples):
-        # Generate branching responses
-        outputs, branch_scores = generate_branching_responses(
-            model,
-            tokenizer,
-            prompt,
-            num_branches=10,
-            max_length=20,
-        )
+        try:
+            # Generate branching responses with longer max_length and temperature
+            outputs, branch_scores = generate_branching_responses(
+                model,
+                tokenizer,
+                prompt,
+                num_branches=10,
+                max_length=50,  # Increased from 20
+            )
 
-        # Get the most confident response from branches
-        best_branch_idx = torch.argmax(torch.tensor(branch_scores))
-        generated_text = tokenizer.decode(
-            outputs.sequences[best_branch_idx], skip_special_tokens=True
-        )
-        answer = generated_text[len(prompt):].strip()
-        answers.append(answer)
-        confidence_scores.append(branch_scores[best_branch_idx])
+            # Get the most confident response from branches
+            best_branch_idx = torch.argmax(torch.tensor(branch_scores))
+            
+            # Get the full sequence for the best branch
+            generated_sequence = outputs.sequences[best_branch_idx]
+            
+            # Find where the prompt ends in the generated sequence
+            prompt_ids = tokenizer(prompt, return_tensors="pt").input_ids[0]
+            prompt_length = len(prompt_ids)
+            
+            # Extract only the answer part
+            answer_ids = generated_sequence[prompt_length:]
+            
+            # Decode the answer
+            answer = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+            
+            # Only append if we got a non-empty answer
+            if answer:
+                answers.append(answer)
+                confidence_scores.append(branch_scores[best_branch_idx])
 
-        # Calculate sequence log probability for the best response
-        sequence_logits = outputs.logits[best_branch_idx]
-        
-        # Get the minimum sequence length
-        min_seq_length = min(logits.size(1) for logits in sequence_logits)
-        
-        # Truncate all logits to the minimum length
-        truncated_logits = [logits[:, :min_seq_length, :] for logits in sequence_logits]
-        
-        # Now we can safely stack the tensors
-        sequence_scores = torch.stack(truncated_logits, dim=0)
-        
-        # Calculate log probability
-        log_prob = torch.sum(torch.log_softmax(sequence_scores[:, 0, :], dim=-1))
-        log_probs.append(log_prob.item())
+                # Calculate sequence log probability for the best response
+                sequence_logits = outputs.logits[best_branch_idx]
+                
+                # Get the minimum sequence length
+                min_seq_length = min(logits.size(1) for logits in sequence_logits)
+                
+                # Truncate all logits to the minimum length
+                truncated_logits = [logits[:, :min_seq_length, :] for logits in sequence_logits]
+                
+                # Stack the tensors
+                sequence_scores = torch.stack(truncated_logits, dim=0)
+                
+                # Calculate log probability with proper handling
+                log_probs_per_token = torch.log_softmax(sequence_scores[:, 0, :], dim=-1)
+                sequence_log_prob = torch.sum(torch.max(log_probs_per_token, dim=-1)[0])
+                log_probs.append(float(sequence_log_prob))
+            else:
+                logging.warning("Generated an empty response, retrying...")
+                continue
+
+        except Exception as e:
+            logging.error(f"Error in generation: {str(e)}")
+            continue
+
+    # If we didn't get enough valid responses, fill with defaults
+    while len(answers) < num_samples:
+        answers.append("Unable to generate response")
+        log_probs.append(float('-inf'))
+        confidence_scores.append(0.0)
 
     return answers, log_probs, confidence_scores
 

@@ -170,8 +170,8 @@ def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_
     topk_values, topk_indices, initial_logits = get_topk_tokens_with_logits(model, inputs, num_branches)
 
     responses = []
-    response_probs = []  # Confidence scores
-    all_branch_logits = []  # For log probability calculation
+    response_probs = []
+    all_branch_logits = []
     
     for k in range(num_branches):
         try:
@@ -184,12 +184,18 @@ def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_
                 'attention_mask': attention_mask
             }
 
-            # Generate full response for this branch
-            response, probs, logits = generate_response_with_scores(model, tokenizer, new_inputs, max_length)
+            # Generate full response for this branch with temperature
+            response, probs, logits = generate_response_with_scores(
+                model, 
+                tokenizer, 
+                new_inputs, 
+                max_length,
+            )
             
-            if response.numel() > 0:  # Only add valid responses
+            # Only add if we got a valid response
+            if response.numel() > 0 and len(probs) > 0:
                 responses.append(response)
-                response_probs.append(sum(probs) / len(probs) if probs else 0.0)
+                response_probs.append(sum(probs) / len(probs))
                 all_branch_logits.append([initial_logits] + logits)
                 
         except Exception as e:
@@ -200,7 +206,7 @@ def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_
     if not responses:
         raise RuntimeError("No valid responses were generated")
 
-    # Create a structure similar to the original model outputs
+    # Create output structure
     class OutputsWithScores:
         def __init__(self, sequences, scores, logits):
             self.sequences = sequences
