@@ -116,32 +116,55 @@ def generate_response_with_scores(model, tokenizer, inputs, max_length=500):
     response_probs = []  # For confidence scoring
     all_logits = []  # For log probability calculation
     
+    # Make sure inputs are on the correct device
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
     for i in range(max_length):
-        # Generate the logits for the next token
-        topk_values, topk_indices, logits = get_topk_tokens_with_logits(model, inputs, num_branches=2)
-        all_logits.append(logits)
+        try:
+            # Generate the logits for the next token
+            topk_values, topk_indices, logits = get_topk_tokens_with_logits(model, inputs, num_branches=2)
+            all_logits.append(logits)
 
-        # Get the difference in probabilities between the top two tokens
-        prob_diff = topk_values[:, 0] - topk_values[:, 1]
-        response_probs.append(prob_diff.item())
+            # Get the difference in probabilities between the top two tokens
+            prob_diff = topk_values[:, 0] - topk_values[:, 1]
+            response_probs.append(prob_diff.item())
 
-        # Append the most likely token to the response
-        next_token = topk_indices[:, 0]
-        response.append(next_token)
+            # Append the most likely token to the response
+            next_token = topk_indices[:, 0]
+            response.append(next_token)
 
-        if next_token == tokenizer.eos_token_id:
+            if next_token == tokenizer.eos_token_id:
+                break
+
+            # Add the token to the input for the next iteration
+            new_input_ids = torch.cat([inputs['input_ids'], next_token.unsqueeze(-1)], dim=1)
+            
+            # Create new attention mask for the expanded input
+            attention_mask = torch.ones_like(new_input_ids)
+            
+            # Update inputs with new tensors
+            inputs = {
+                'input_ids': new_input_ids,
+                'attention_mask': attention_mask
+            }
+
+        except RuntimeError as e:
+            logging.warning(f"Error during generation at step {i}: {str(e)}")
             break
 
-        # Add the token to the input for the next iteration
-        inputs['input_ids'] = torch.cat([inputs['input_ids'], next_token.unsqueeze(-1)], dim=1)
-
-    response_tensor = torch.cat(response).unsqueeze(0)
-    return response_tensor, response_probs, all_logits
+    # Only process if we have generated any tokens
+    if response:
+        response_tensor = torch.stack(response).squeeze(1)
+        return response_tensor.unsqueeze(0), response_probs, all_logits
+    else:
+        # Return empty tensors if no tokens were generated
+        return torch.tensor([]).to(model.device), [], []
 
 def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_length=500):
     """Generate multiple responses with both branching and score tracking."""
-    # Tokenize the prompt
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    # Tokenize the prompt and prepare inputs
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     # Get initial top k tokens
     topk_values, topk_indices, initial_logits = get_topk_tokens_with_logits(model, inputs, num_branches)
@@ -151,16 +174,31 @@ def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_
     all_branch_logits = []  # For log probability calculation
     
     for k in range(num_branches):
-        # Create new branch with kth most likely token
-        new_input_ids = inputs.copy()
-        new_input_ids['input_ids'] = torch.cat([inputs['input_ids'], topk_indices[:, k].unsqueeze(-1)], dim=1)
+        try:
+            # Create new branch with kth most likely token
+            new_input_ids = torch.cat([inputs['input_ids'], topk_indices[:, k].unsqueeze(-1)], dim=1)
+            attention_mask = torch.ones_like(new_input_ids)
+            
+            new_inputs = {
+                'input_ids': new_input_ids,
+                'attention_mask': attention_mask
+            }
 
-        # Generate full response for this branch
-        response, probs, logits = generate_response_with_scores(model, tokenizer, new_input_ids, max_length)
-        
-        responses.append(response)
-        response_probs.append(sum(probs) / len(probs))
-        all_branch_logits.append([initial_logits] + logits)
+            # Generate full response for this branch
+            response, probs, logits = generate_response_with_scores(model, tokenizer, new_inputs, max_length)
+            
+            if response.numel() > 0:  # Only add valid responses
+                responses.append(response)
+                response_probs.append(sum(probs) / len(probs) if probs else 0.0)
+                all_branch_logits.append([initial_logits] + logits)
+                
+        except Exception as e:
+            logging.warning(f"Error generating branch {k}: {str(e)}")
+            continue
+
+    # Handle case where no valid responses were generated
+    if not responses:
+        raise RuntimeError("No valid responses were generated")
 
     # Create a structure similar to the original model outputs
     class OutputsWithScores:
@@ -176,4 +214,3 @@ def generate_branching_responses(model, tokenizer, prompt, num_branches=10, max_
     )
 
     return outputs, response_probs
-
