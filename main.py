@@ -15,7 +15,6 @@ import json
 from model import (
     load_model_and_tokenizer,
     EntailmentDeberta,
-    generate_branching_responses,
 )
 from data import get_dataset
 from scores import (
@@ -26,96 +25,215 @@ from scores import (
 )
 
 
-def generate_answers(model, tokenizer, question, context, num_samples=5):
-    """Generate multiple answers using branching and tracking both types of scores."""
+import torch
+import torch.nn.functional as F
+import logging
+from typing import List, Tuple, Dict, Any
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+
+def get_topk_next_tokens(
+    model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], num_branches: int = 5
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Get the top k most likely next tokens and their probabilities.
+
+    Args:
+        model: The language model
+        inputs: Tokenized inputs
+        num_branches: Number of top tokens to return
+
+    Returns:
+        Tuple of (probabilities, token indices)
+    """
+    with torch.no_grad():
+        outputs = model(**inputs, return_dict=True)
+        next_token_logits = outputs.logits[:, -1, :]
+
+    # Get probabilities and top k tokens
+    probabilities = F.softmax(next_token_logits, dim=-1)
+    topk_values, topk_indices = torch.topk(probabilities, num_branches)
+
+    return topk_values, topk_indices
+
+
+def generate_single_branch(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    inputs: Dict[str, torch.Tensor],
+    max_length: int = 100,
+) -> Tuple[List[str], float]:
+    """
+    Generate a complete response starting from the given inputs.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        inputs: Initial tokenized inputs
+        max_length: Maximum generation length
+
+    Returns:
+        Tuple of (generated tokens, average probability difference)
+    """
+    response = []
+    prob_diffs = []
+
+    for _ in range(max_length):
+        # Get top 2 most likely tokens to calculate probability difference
+        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=2)
+
+        # Calculate probability difference between top two tokens
+        prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+        prob_diffs.append(prob_diff)
+
+        # Add most likely token to response
+        next_token = topk_indices[0, 0].unsqueeze(0)
+        response.append(next_token)
+
+        # Stop if we hit the end token
+        if next_token.item() == tokenizer.eos_token_id:
+            break
+
+        # Update inputs for next iteration
+        inputs["input_ids"] = torch.cat(
+            [inputs["input_ids"], next_token.unsqueeze(0)], dim=1
+        )
+        if "attention_mask" in inputs:
+            inputs["attention_mask"] = torch.cat(
+                [
+                    inputs["attention_mask"],
+                    torch.ones((1, 1), device=inputs["attention_mask"].device),
+                ],
+                dim=1,
+            )
+
+    # Convert token IDs to text
+    generated_text = tokenizer.decode(torch.cat(response))
+    avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
+
+    return generated_text, avg_prob_diff
+
+
+def generate_branching_responses(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    prompt: str,
+    num_branches: int = 5,
+    max_length: int = 100,
+) -> List[Tuple[str, float]]:
+    """
+    Generate multiple responses by exploring different initial tokens.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        prompt: Input prompt
+        num_branches: Number of different branches to explore
+        max_length: Maximum generation length
+
+    Returns:
+        List of tuples containing (generated text, confidence score)
+    """
+    logging.info(f"Generating {num_branches} branching responses for prompt: {prompt}")
+
+    # Tokenize the prompt
+    inputs = tokenizer(prompt, return_tensors="pt")
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    # Get initial top k tokens
+    topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
+
+    responses = []
+    for k in range(num_branches):
+        # Create a new branch starting with the k-th most likely token
+        branch_inputs = {
+            "input_ids": torch.cat(
+                [inputs["input_ids"], topk_indices[:, k : k + 1]], dim=1
+            ),
+            "attention_mask": (
+                torch.cat(
+                    [
+                        inputs["attention_mask"],
+                        torch.ones((1, 1), device=inputs["attention_mask"].device),
+                    ],
+                    dim=1,
+                )
+                if "attention_mask" in inputs
+                else None
+            ),
+        }
+
+        # Generate the rest of the response for this branch
+        generated_text, confidence_score = generate_single_branch(
+            model, tokenizer, branch_inputs, max_length
+        )
+
+        responses.append((generated_text, confidence_score))
+        logging.info(
+            f"Generated branch {k+1}/{num_branches} with confidence: {confidence_score:.4f}"
+        )
+
+    return responses
+
+
+# Example usage
+def generate_answers(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    question: str,
+    context: str,
+    num_branches: int = 5,
+) -> Tuple[List[str], List[float]]:
+    """
+    Generate multiple answers for a given question and context using branching generation.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        question: The question to answer
+        context: The context for the question
+        num_branches: Number of different answers to generate
+
+    Returns:
+        Tuple of (list of answers, list of log probabilities)
+    """
     prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
-
-    answers = []
-    log_probs = []
-    confidence_scores = []
-
     logging.info(f"Context: {context}")
     logging.info(f"Question: {question}")
 
-    for _ in range(num_samples):
-        try:
-            # Generate branching responses with longer max_length and temperature
-            outputs, branch_scores = generate_branching_responses(
-                model,
-                tokenizer,
-                prompt,
-                num_branches=10,
-                max_length=50,  # Increased from 20
-            )
+    # Use our branching generation method
+    responses = generate_branching_responses(
+        model,
+        tokenizer,
+        prompt,
+        num_branches=num_branches,
+        max_length=20,  # Using same max_length as original
+    )
 
-            # Get the most confident response from branches
-            best_branch_idx = torch.argmax(torch.tensor(branch_scores))
-            
-            # Get the full sequence for the best branch
-            generated_sequence = outputs.sequences[best_branch_idx]
-            
-            # Find where the prompt ends in the generated sequence
-            prompt_ids = tokenizer(prompt, return_tensors="pt").input_ids[0]
-            prompt_length = len(prompt_ids)
-            
-            # Extract only the answer part
-            answer_ids = generated_sequence[prompt_length:]
-            
-            # Decode the answer
-            answer = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+    # Sort responses by confidence score
+    responses.sort(key=lambda x: x[1], reverse=True)
 
-            logging.info(f"Answer: {answer}")
-            
-            # Only append if we got a non-empty answer
-            if answer:
-                answers.append(answer)
-                confidence_scores.append(branch_scores[best_branch_idx])
+    # Separate answers and probabilities and remove the prompt from answers
+    answers = []
+    log_probs = []
 
-                # Calculate sequence log probability for the best response
-                sequence_logits = outputs.logits[best_branch_idx]
-                
-                # Get the minimum sequence length
-                min_seq_length = min(logits.size(1) for logits in sequence_logits)
-                
-                # Truncate all logits to the minimum length
-                truncated_logits = [logits[:, :min_seq_length, :] for logits in sequence_logits]
-                
-                # Stack the tensors
-                sequence_scores = torch.stack(truncated_logits, dim=0)
-                
-                # Calculate log probability with proper handling
-                log_probs_per_token = torch.log_softmax(sequence_scores[:, 0, :], dim=-1)
-                sequence_log_prob = torch.sum(torch.max(log_probs_per_token, dim=-1)[0])
-                log_probs.append(float(sequence_log_prob))
-            else:
-                logging.warning("Generated an empty response, retrying...")
-                continue
+    for response, prob in responses:
+        # Extract just the answer part after the prompt
+        answer = response[len(prompt) :].strip()
+        answers.append(answer)
+        log_probs.append(prob)
 
-        except Exception as e:
-            logging.error(f"Error in generation: {str(e)}")
-            continue
+        logging.info(f"Generated answer: {answer}")
+        logging.info(f"Log probability: {prob}")
 
-    # If we didn't get enough valid responses, fill with defaults
-    while len(answers) < num_samples:
-        answers.append("Unable to generate response")
-        log_probs.append(float('-inf'))
-        confidence_scores.append(0.0)
-
-    return answers, log_probs, confidence_scores
+    return answers, log_probs
 
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
-    answers, log_probs, confidence_scores = generate_answers(
+    answers, log_probs = generate_answers(
         model, tokenizer, sample["question"], sample["context"]
     )
-
-    # Print results with both types of scores
-    for i, (answer, log_prob, confidence) in enumerate(zip(answers, log_probs, confidence_scores)):
-        print(f"\nAnswer {i+1}:")
-        print(f"Text: {answer}")
-        print(f"Log Probability: {log_prob}")
-        print(f"Confidence Score: {confidence}")
 
     # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
