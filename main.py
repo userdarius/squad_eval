@@ -58,8 +58,18 @@ def generate_answers(model, tokenizer, question, context, num_samples=5):
 
         # Calculate sequence log probability for the best response
         sequence_logits = outputs.logits[best_branch_idx]
-        sequence_scores = torch.stack([logits[0] for logits in sequence_logits], dim=0)
-        log_prob = torch.sum(torch.log_softmax(sequence_scores, dim=-1))
+        
+        # Get the minimum sequence length
+        min_seq_length = min(logits.size(1) for logits in sequence_logits)
+        
+        # Truncate all logits to the minimum length
+        truncated_logits = [logits[:, :min_seq_length, :] for logits in sequence_logits]
+        
+        # Now we can safely stack the tensors
+        sequence_scores = torch.stack(truncated_logits, dim=0)
+        
+        # Calculate log probability
+        log_prob = torch.sum(torch.log_softmax(sequence_scores[:, 0, :], dim=-1))
         log_probs.append(log_prob.item())
 
     return answers, log_probs, confidence_scores
