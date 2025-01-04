@@ -109,7 +109,7 @@ def get_topk_next_tokens(
     
     # Log the top token indices and their probabilities
     for i in range(num_branches):
-        logging.info(f"Top token {i+1}: index={topk_indices[0,i].item()}, prob={topk_values[0,i].item():.4f}")
+        print(f"Top token {i+1}: index={topk_indices[0,i].item()}, prob={topk_values[0,i].item():.4f}")
 
     return topk_values, topk_indices
 
@@ -123,8 +123,8 @@ def generate_single_branch(
     """
     Generate a complete response starting from the given inputs.
     """
-    logging.info("Starting single branch generation...")
-    logging.info(f"Initial input shape: {inputs['input_ids'].shape}")
+    print("Starting single branch generation...")
+    print(f"Initial input shape: {inputs['input_ids'].shape}")
     
     response = []
     prob_diffs = []
@@ -143,14 +143,14 @@ def generate_single_branch(
 
         # Log current token and running text
         current_token_text = tokenizer.decode(next_token)
-        logging.info(f"Step {step}: Generated token: {current_token_text} (id={next_token.item()})")
+        print(f"Step {step}: Generated token: {current_token_text} (id={next_token.item()})")
         if step % 5 == 0:  # Log running text every 5 tokens
             running_text = tokenizer.decode(torch.cat(response))
-            logging.info(f"Running text at step {step}: {running_text}")
+            print(f"Running text at step {step}: {running_text}")
 
         # Stop if we hit the end token
         if next_token.item() == tokenizer.eos_token_id:
-            logging.info("Reached end token, stopping generation")
+            print("Reached end token, stopping generation")
             break
 
         # Update inputs for next iteration
@@ -171,9 +171,9 @@ def generate_single_branch(
     generated_text = tokenizer.decode(generated_tokens)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
     
-    logging.info(f"Final generated text length: {len(generated_text)}")
-    logging.info(f"Final generated text: '{generated_text}'")
-    logging.info(f"Average probability difference: {avg_prob_diff:.4f}")
+    print(f"Final generated text length: {len(generated_text)}")
+    print(f"Final generated text: '{generated_text}'")
+    print(f"Average probability difference: {avg_prob_diff:.4f}")
 
     return generated_text, avg_prob_diff
 
@@ -188,13 +188,13 @@ def generate_branching_responses(
     """
     Generate multiple responses by exploring different initial tokens.
     """
-    logging.info(f"Starting branching generation with {num_branches} branches")
-    logging.info(f"Prompt: '{prompt}'")
+    print(f"Starting branching generation with {num_branches} branches")
+    print(f"Prompt: '{prompt}'")
 
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    logging.info(f"Tokenized prompt shape: {inputs['input_ids'].shape}")
+    print(f"Tokenized prompt shape: {inputs['input_ids'].shape}")
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
@@ -202,11 +202,11 @@ def generate_branching_responses(
     # Log initial token choices
     for k in range(num_branches):
         token_text = tokenizer.decode(topk_indices[0, k])
-        logging.info(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
+        print(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
 
     responses = []
     for k in range(num_branches):
-        logging.info(f"\nGenerating branch {k+1}/{num_branches}")
+        print(f"\nGenerating branch {k+1}/{num_branches}")
         # Create a new branch starting with the k-th most likely token
         branch_inputs = {
             "input_ids": torch.cat(
@@ -231,9 +231,9 @@ def generate_branching_responses(
         )
 
         responses.append((generated_text, confidence_score))
-        logging.info(f"Branch {k+1} complete:")
-        logging.info(f"Generated text: '{generated_text}'")
-        logging.info(f"Confidence score: {confidence_score:.4f}")
+        print(f"Branch {k+1} complete:")
+        print(f"Generated text: '{generated_text}'")
+        print(f"Confidence score: {confidence_score:.4f}")
 
-    logging.info("\nAll branches complete")
+    print("\nAll branches complete")
     return responses
