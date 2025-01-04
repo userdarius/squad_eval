@@ -119,7 +119,7 @@ def generate_single_branch(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     inputs: Dict[str, torch.Tensor],
-    max_length: int = 100,
+    max_length: int = 20,
 ) -> Tuple[List[str], float]:
     """
     Generate a complete response starting from the given inputs.
@@ -184,7 +184,7 @@ def generate_branching_responses(
     tokenizer: AutoTokenizer,
     prompt: str,
     num_branches: int = 5,
-    max_length: int = 100,
+    max_length: int = 20,
 ) -> List[Tuple[str, float]]:
     """
     Generate multiple responses by exploring different initial tokens.
