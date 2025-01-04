@@ -1,0 +1,11 @@
+transformers 
+datasets 
+wandb 
+huggingface_hub 
+evaluate
+bitsandbytes
+accelerate
+tiktoken
+timeout_decorator
+tqdm
+torch
