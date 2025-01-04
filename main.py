@@ -30,13 +30,16 @@ def generate_answers(model, tokenizer, question, context, num_samples=5):
     
     answers = []
     log_probs = []
+
+    logging.info(f"Context: {context}")
+    logging.info(f"Question: {question}")
     
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=30,
+                max_new_tokens=20,
                 num_return_sequences=1,
                 output_scores=True,
                 return_dict_in_generate=True,
