@@ -60,7 +60,7 @@ def generate_answers(
         model,
         tokenizer,
         prompt,
-        max_length=20,
+        max_length=10,
         num_branches=10,
     )
 

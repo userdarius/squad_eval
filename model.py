@@ -150,7 +150,6 @@ def generate_single_branch(
                     or token.startswith(":")
                     or token.startswith("(")
                     or token == "\n"
-                    or token.startswith(" '")
                 )
             ]
 
