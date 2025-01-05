@@ -114,15 +114,22 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
     )
-    print(
-        f"Context entailment score: {context_entailment_score} ({['contradiction', 'neutral', 'entailment'][context_entailment_score]})\n"
-    )
+    if context_entailment_score == 0:
+        print(f"Contradiction")
+    elif context_entailment_score == 1:
+        print(f"Neutral")
+    else:
+        print(f"Entailment")
+
     answer_entailment_score = context_entails_response(
         sample["answers"]["text"][0], answers, entailment_model
     )
-    print(
-        f"Answer entailment score: {answer_entailment_score} ({['contradiction', 'neutral', 'entailment'][answer_entailment_score]})\n"
-    )
+    if answer_entailment_score == 0:
+        print(f"Contradiction")
+    elif answer_entailment_score == 1:
+        print(f"Neutral")
+    else:
+        print(f"Entailment")
 
     return {
         "question_id": sample["id"],
