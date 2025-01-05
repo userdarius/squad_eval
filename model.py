@@ -190,24 +190,26 @@ def generate_branching_responses(
     prompt: str,
     max_length: int,
     num_branches: int,
-) -> List[Tuple[str, float]]:
+) -> List[Tuple[str, float, float]]:
     """
     Generate multiple responses by exploring different initial tokens.
-    Confidence score is the average probability difference between the top 2 tokens.
-    confidence score is in the range [0, 1] where 1 is the highest confidence.
+    Returns tuples of (text, confidence_score, log_probability)
     """
-
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     # Get initial top k tokens
-    topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
+    topk_values, topk_indices, topk_logprobs = get_topk_next_tokens(
+        model, inputs, num_branches
+    )  # Updated to unpack 3 values
 
     # Log initial token choices
     for k in range(num_branches):
         token_text = tokenizer.decode(topk_indices[0, k])
-        print(f"Initial token {k+1}: {token_text} (prob: {topk_values[0,k]:.4f})")
+        print(
+            f"Initial token {k+1}: {token_text} (prob: {topk_values[0,k]:.4f}, log_prob: {topk_logprobs[0,k]:.4f})"
+        )
 
     responses = []
     for k in range(num_branches):
@@ -222,6 +224,7 @@ def generate_branching_responses(
         ):
             print(f"Skipping branch {k+1} because it starts with a stop token")
             continue
+
         # Create a new branch starting with the k-th most likely token
         branch_inputs = {
             "input_ids": torch.cat(
