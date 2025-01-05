@@ -37,6 +37,7 @@ def generate_answers(
     tokenizer: AutoTokenizer,
     question: str,
     context: str,
+    answer: str,
 ) -> Tuple[List[str], List[float]]:
     """
     Generate multiple answers for a given question and context using branching generation.
@@ -52,15 +53,14 @@ def generate_answers(
         Tuple of (list of answers, list of log probabilities)
     """
     prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
-    logging.info(f"Context: {context}")
-    logging.info(f"Question: {question}")
+    logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
     # Use our branching generation method
     responses = generate_branching_responses(
         model,
         tokenizer,
         prompt,
-        max_length=10,
+        max_length=5,
         num_branches=10,
     )
 
@@ -98,7 +98,11 @@ def generate_answers(
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
     answers, log_probs = generate_answers(
-        model, tokenizer, sample["question"], sample["context"]
+        model,
+        tokenizer,
+        sample["question"],
+        sample["context"],
+        sample["answers"]["text"][0],
     )
 
     # Calculate semantic IDs
@@ -107,8 +111,11 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     # Calculate metrics
     pred_entropy = predictive_entropy(np.array(log_probs))
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
-    entailment_score = context_entails_response(
+    context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
+    )
+    answer_entailment_score = context_entails_response(
+        sample["answers"]["text"][0], answers, entailment_model
     )
 
     return {
@@ -119,7 +126,8 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "ground_truth": sample["answers"]["text"][0],
         "predictive_entropy": pred_entropy,
         "cluster_entropy": cluster_entropy,
-        "entailment_score": entailment_score,
+        "context_entailment_score": context_entailment_score,
+        "answer_entailment_score": answer_entailment_score,
         "semantic_clusters": semantic_ids,
     }
 
@@ -133,7 +141,8 @@ def save_results(results, output_file):
     metrics = {
         "mean_predictive_entropy": df["predictive_entropy"].mean(),
         "mean_cluster_entropy": df["cluster_entropy"].mean(),
-        "mean_entailment_score": df["entailment_score"].mean(),
+        "mean_context_entailment_score": df["context_entailment_score"].mean(),
+        "mean_answer_entailment_score": df["answer_entailment_score"].mean(),
     }
 
     with open(output_file.replace(".csv", "_summary.json"), "w") as f:

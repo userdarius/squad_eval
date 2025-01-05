@@ -183,13 +183,11 @@ def generate_branching_responses(
     """
     Generate multiple responses by exploring different initial tokens.
     """
-    # print(f"Starting branching generation with {num_branches} branches")
-    # print(f"Prompt: '{prompt}'")
 
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    # print(f"Tokenized prompt shape: {inputs['input_ids'].shape}")
+
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
@@ -201,7 +199,6 @@ def generate_branching_responses(
 
     responses = []
     for k in range(num_branches):
-        # print(f"\nGenerating branch {k+1}/{num_branches}")
         # Create a new branch starting with the k-th most likely token
         branch_inputs = {
             "input_ids": torch.cat(
@@ -226,9 +223,8 @@ def generate_branching_responses(
         )
 
         responses.append((generated_text, confidence_score))
-        # print(f"Branch {k+1} complete:")
         print(f"Generated text: {generated_text}")
         print(f"Confidence score: {confidence_score:.4f}")
 
-    print("\nAll branches complete")
+    print("\nAll branches complete\n")
     return responses

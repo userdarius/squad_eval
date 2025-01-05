@@ -14,15 +14,12 @@ def context_entails_response(context, responses, model):
     votes = []
     for idx, response in enumerate(responses):
         vote = model.check_implication(response, context)
-        print(f"Summary {idx+1}: {response}")
         print(
             f"Entailment score: {vote} ({['contradiction', 'neutral', 'entailment'][vote]})\n"
         )
         votes.append(vote)
 
     mean_score = np.mean(votes)
-    print(f"All votes: {votes}")
-    print(f"Mean entailment score: {mean_score}")
     return mean_score
 
 
@@ -74,11 +71,11 @@ def get_semantic_ids(strings_list, model, strict_entailment=False, example=None)
         clusters[sem_id].append(strings_list[idx])
 
     # Log each cluster
-    logging.info("Semantic clusters:")
+    print("Semantic clusters:")
     for cluster_id, texts in clusters.items():
-        logging.info(f"\nCluster {cluster_id}:")
+        print(f"\nCluster {cluster_id}:")
         for text in texts:
-            logging.info(f"  - {text}")
+            print(f"  - {text}")
 
     return semantic_set_ids
 
