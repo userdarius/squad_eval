@@ -125,12 +125,14 @@ def generate_single_branch(
         # Get the raw token
         next_token = topk_indices[0, 0].item()
         next_token_text = tokenizer.decode([next_token])
+        print(f"Step {step}: Token {next_token} -> '{next_token_text}'")
 
         # Check stopping conditions using the full sequence
         current_tokens = (
             response_tokens + [next_token] if response_tokens else [next_token]
         )
         current_text = tokenizer.decode(current_tokens)
+        print(f"Current text: '{current_text}'")
 
         # Check stopping conditions
         if any(
@@ -193,6 +195,10 @@ def generate_branching_responses(
 
     responses = []
     for k in range(num_branches):
+        print(f"\nStarting branch {k+1}")
+        first_token = topk_indices[:, k : k + 1]
+        first_token_text = tokenizer.decode(first_token[0])
+        print(f"First token: '{first_token_text}'")
         # Create a new branch starting with the k-th most likely token
         branch_inputs = {
             "input_ids": torch.cat(
