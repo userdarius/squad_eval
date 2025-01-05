@@ -223,8 +223,6 @@ def generate_branching_responses(
         )
 
         responses.append((generated_text, confidence_score))
-        print(f"Generated text: {generated_text}")
-        print(f"Confidence score: {confidence_score:.4f}")
 
     print("\nAll branches complete\n")
     return responses

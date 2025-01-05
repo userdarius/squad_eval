@@ -75,7 +75,7 @@ def get_semantic_ids(strings_list, model, strict_entailment=False, example=None)
     for cluster_id, texts in clusters.items():
         print(f"\nCluster {cluster_id}:")
         for text in texts:
-            print(f"  - {text}")
+            print(f" {text}")
 
     return semantic_set_ids
 
