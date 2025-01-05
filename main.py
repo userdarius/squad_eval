@@ -178,7 +178,7 @@ def main():
 
         # Process samples
         for idx, sample in enumerate(tqdm(dataset)):
-            if idx >= 100:  # Limit to 100 samples for testing
+            if idx >= 5:  # Limit to 100 samples for testing
                 break
 
             try:
