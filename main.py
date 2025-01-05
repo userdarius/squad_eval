@@ -37,7 +37,6 @@ def generate_answers(
     tokenizer: AutoTokenizer,
     question: str,
     context: str,
-    num_branches: int,
 ) -> Tuple[List[str], List[float]]:
     """
     Generate multiple answers for a given question and context using branching generation.
