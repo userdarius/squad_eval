@@ -61,7 +61,7 @@ def generate_answers(
         tokenizer,
         prompt,
         max_length=20,
-        num_branches=5,
+        num_branches=10,
     )
 
     # Sort responses by confidence score
