@@ -26,15 +26,13 @@ from scores import (
 from typing import List, Dict
 
 
-def generate_answers(model, tokenizer, question, context, num_samples=10):
+def generate_answers(model, tokenizer, question, context, answer, num_samples=10):
     """Generate multiple answers for a given question and context."""
-    prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
+    prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
+    logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
     answers = []
     log_probs = []
-
-    logging.info(f"Context: {context}")
-    logging.info(f"Question: {question}")
 
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -58,6 +56,8 @@ def generate_answers(model, tokenizer, question, context, num_samples=10):
         answer = generated_text[len(prompt) :].strip()
         answers.append(answer)
 
+        logging.info(f"Generated answer: {answer}")
+
         # Calculate sequence log probability
         # Calculate log probabilities
         scores = torch.stack(outputs.scores, dim=1)
@@ -74,7 +74,7 @@ def generate_answers(model, tokenizer, question, context, num_samples=10):
             token_probs.gather(-1, sequence.unsqueeze(-1)) + 1e-10
         )
         log_prob = torch.sum(token_log_probs).item()
-
+        logging.info(f"Log probability: {log_prob}")
         log_probs.append(log_prob)
 
     return answers, log_probs
@@ -83,7 +83,11 @@ def generate_answers(model, tokenizer, question, context, num_samples=10):
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
     answers, log_probs = generate_answers(
-        model, tokenizer, sample["question"], sample["context"]
+        model,
+        tokenizer,
+        sample["question"],
+        sample["context"],
+        sample["answers"]["text"][0],
     )
 
     # Calculate semantic IDs
@@ -98,6 +102,23 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     answer_entailment_score = context_entails_response(
         sample["answers"]["text"][0], answers, entailment_model
     )
+
+    # Print entailment scores (existing logic)
+    print(f"Context entailment score: {context_entailment_score}")
+    if context_entailment_score == 0:
+        print(f"Contradiction")
+    elif context_entailment_score == 1:
+        print(f"Neutral")
+    else:
+        print(f"Entailment")
+
+    print(f"Answer entailment score: {answer_entailment_score}")
+    if answer_entailment_score == 0:
+        print(f"Contradiction")
+    elif answer_entailment_score == 1:
+        print(f"Neutral")
+    else:
+        print(f"Entailment")
 
     semantic_cluster_counts = np.bincount(semantic_ids)
 

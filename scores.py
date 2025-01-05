@@ -14,7 +14,6 @@ def context_entails_response(context, responses, model):
     votes = []
     for idx, response in enumerate(responses):
         vote = model.check_implication(response, context)
-        print(f"Summary {idx+1}: {response}")
         print(
             f"Entailment score: {vote} ({['contradiction', 'neutral', 'entailment'][vote]})\n"
         )
@@ -78,7 +77,7 @@ def get_semantic_ids(strings_list, model, strict_entailment=False, example=None)
     for cluster_id, texts in clusters.items():
         logging.info(f"\nCluster {cluster_id}:")
         for text in texts:
-            logging.info(f"  - {text}")
+            logging.info(f" {text}")
 
     return semantic_set_ids
 
