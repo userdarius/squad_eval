@@ -95,7 +95,7 @@ class EntailmentDeberta(BaseEntailment):
 
 ### Branching Model ###
 def get_topk_next_tokens(
-    model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], num_branches: int = 5
+    model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], num_branches: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Get the top k most likely next tokens and their probabilities.
@@ -106,7 +106,7 @@ def get_topk_next_tokens(
 
     probabilities = F.softmax(next_token_logits, dim=-1)
     topk_values, topk_indices = torch.topk(probabilities, num_branches)
-    
+
     # Log the top token indices and their probabilities
     for i in range(num_branches):
         # print(f"Top token {i+1}: index={topk_indices[0,i].item()}, prob={topk_values[0,i].item():.4f}")
@@ -118,15 +118,15 @@ def get_topk_next_tokens(
 def generate_single_branch(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
+    max_length: int,
     inputs: Dict[str, torch.Tensor],
-    max_length: int = 20,
 ) -> Tuple[List[str], float]:
     """
     Generate a complete response starting from the given inputs.
     """
     # print("Starting single branch generation...")
     # print(f"Initial input shape: {inputs['input_ids'].shape}")
-    
+
     response = []
     prob_diffs = []
 
@@ -171,7 +171,7 @@ def generate_single_branch(
     generated_tokens = torch.cat(response)
     generated_text = tokenizer.decode(generated_tokens)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
-    
+
     # print(f"Final generated text length: {len(generated_text)}")
     print(f"Final generated text for single branch: '{generated_text}'")
     # print(f"Average probability difference: {avg_prob_diff:.4f}")
@@ -183,8 +183,8 @@ def generate_branching_responses(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     prompt: str,
-    num_branches: int = 5,
-    max_length: int = 20,
+    max_length: int,
+    num_branches: int,
 ) -> List[Tuple[str, float]]:
     """
     Generate multiple responses by exploring different initial tokens.
@@ -199,7 +199,7 @@ def generate_branching_responses(
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
-    
+
     # Log initial token choices
     for k in range(num_branches):
         token_text = tokenizer.decode(topk_indices[0, k])
@@ -228,7 +228,7 @@ def generate_branching_responses(
 
         # Generate the rest of the response for this branch
         generated_text, confidence_score = generate_single_branch(
-            model, tokenizer, branch_inputs, max_length
+            model, tokenizer, max_length, branch_inputs
         )
 
         responses.append((generated_text, confidence_score))

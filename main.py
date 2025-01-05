@@ -37,7 +37,7 @@ def generate_answers(
     tokenizer: AutoTokenizer,
     question: str,
     context: str,
-    num_branches: int = 5,
+    num_branches: int,
 ) -> Tuple[List[str], List[float]]:
     """
     Generate multiple answers for a given question and context using branching generation.
@@ -61,8 +61,8 @@ def generate_answers(
         model,
         tokenizer,
         prompt,
-        num_branches=num_branches,
-        max_length=100,  
+        max_length=20,
+        num_branches=5,
     )
 
     # Sort responses by confidence score
@@ -77,7 +77,7 @@ def generate_answers(
     for response, prob in responses:
         # Extract just the answer part, making sure to handle the full response correctly
         full_response = response.strip()
-        
+
         # If the response starts with the prompt (or part of it), remove it
         if full_response.startswith(prompt[:20]):  # Check first 20 chars to be safe
             answer = full_response[prompt_end_index:].strip()
