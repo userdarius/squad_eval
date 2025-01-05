@@ -38,7 +38,7 @@ def generate_answers(
     question: str,
     context: str,
     answer: str,
-) -> Tuple[List[str], List[float]]:
+) -> Tuple[List[str], List[float], List[float]]:  
     """
     Generate multiple answers for a given question and context using branching generation.
 
@@ -50,7 +50,7 @@ def generate_answers(
         num_branches: Number of different answers to generate
 
     Returns:
-        Tuple of (list of answers, list of log probabilities)
+        Tuple of (list of answers, list of confidence scores, list of log probabilities)
     """
     prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
@@ -67,18 +67,23 @@ def generate_answers(
     # Sort responses by confidence score
     responses.sort(key=lambda x: x[1], reverse=True)
 
-    # Separate answers and probabilities
+    # Separate answers, confidence scores, and log probabilities
     answers = []
     confidence_scores = []
+    log_probs = []
 
     prompt_end_index = len(prompt.strip())
 
-    for response, confidence_score in responses:
+    for (
+        response,
+        confidence_score,
+        log_prob,
+    ) in responses:  
         # Extract just the answer part, making sure to handle the full response correctly
         full_response = response.strip()
 
         # If the response starts with the prompt (or part of it), remove it
-        if full_response.startswith(prompt):  
+        if full_response.startswith(prompt):
             answer = full_response[prompt_end_index:].strip()
         else:
             # If response doesn't include prompt, use it as is
@@ -88,28 +93,33 @@ def generate_answers(
         if answer:
             answers.append(answer)
             confidence_scores.append(confidence_score)
+            log_probs.append(log_prob)
 
             logging.info(f"Generated answer: {answer}")
             logging.info(f"Confidence score: {confidence_score}")
+            logging.info(f"Log probability: {log_prob}")
 
-    return answers, confidence_scores
+    return answers, confidence_scores, log_probs
 
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
-    answers, confidence_scores = generate_answers(
-        model,
-        tokenizer,
-        sample["question"],
-        sample["context"],
-        sample["answers"]["text"][0],
+    answers, confidence_scores, log_probs = (
+        generate_answers(  
+            model,
+            tokenizer,
+            sample["question"],
+            sample["context"],
+            sample["answers"]["text"][0],
+        )
     )
 
     # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
 
     # Calculate metrics
-    pred_entropy = predictive_entropy(np.array(confidence_scores))
+    # Use log_probs for predictive entropy instead of confidence scores
+    pred_entropy = predictive_entropy(np.array(log_probs))
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
@@ -144,6 +154,8 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "context_entailment_score": context_entailment_score,
         "answer_entailment_score": answer_entailment_score,
         "semantic_clusters": semantic_ids,
+        "confidence_scores": confidence_scores,  
+        "log_probabilities": log_probs,  
     }
 
 

@@ -96,18 +96,23 @@ class EntailmentDeberta(BaseEntailment):
 ### Branching Model ###
 def get_topk_next_tokens(
     model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], num_branches: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Get the top k most likely next tokens and their probabilities.
+    Also returns the log probabilities.
     """
     with torch.no_grad():
         outputs = model(**inputs, return_dict=True, temperature=0.4)
         next_token_logits = outputs.logits[:, -1, :]
 
+    log_probs = torch.log_softmax(next_token_logits, dim=-1)  # Get log probabilities
     probabilities = torch.softmax(next_token_logits, dim=-1)
     topk_values, topk_indices = torch.topk(probabilities, num_branches)
+    topk_logprobs = torch.gather(
+        log_probs, -1, topk_indices
+    )  # Get corresponding log probs
 
-    return topk_values, topk_indices
+    return topk_values, topk_indices, topk_logprobs
 
 
 def generate_single_branch(
@@ -115,20 +120,23 @@ def generate_single_branch(
     tokenizer: AutoTokenizer,
     max_length: int,
     inputs: Dict[str, torch.Tensor],
-) -> Tuple[List[str], float]:
-    # Initialize response_tokens with the first token from the input
-    response_tokens = [
-        inputs["input_ids"][0, -1].item()
-    ]  # Get the last token from inputs
+) -> Tuple[str, float, float]:
+    response_tokens = [inputs["input_ids"][0, -1].item()]
     prob_diffs = []
+    sequence_logprob = 0.0  # Track sequence log probability
 
     print(f"Starting with initial token: '{tokenizer.decode([response_tokens[0]])}'")
 
     for step in range(max_length):
-        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=10)
+        topk_values, topk_indices, topk_logprobs = get_topk_next_tokens(
+            model, inputs, num_branches=10
+        )
 
         next_token = topk_indices[0, 0].item()
         next_token_text = tokenizer.decode([next_token])
+
+        # Add log probability of chosen token
+        sequence_logprob += topk_logprobs[0, 0].item()
 
         current_text = tokenizer.decode(response_tokens + [next_token])
         print(f"Step {step}: Token {next_token} -> '{next_token_text}'")
@@ -142,6 +150,7 @@ def generate_single_branch(
                 stop in current_text for stop in [".", "\n", "Explanation:", "Answer:"]
             ):
                 response_tokens.append(next_token)
+                sequence_logprob += topk_logprobs[0, 0].item()
             break
 
         # Regular token processing
@@ -167,7 +176,12 @@ def generate_single_branch(
     generated_text = tokenizer.decode(response_tokens, skip_special_tokens=True)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
 
-    return generated_text.strip(), avg_prob_diff
+    # Normalize log probability by sequence length
+    normalized_logprob = (
+        sequence_logprob / len(response_tokens) if response_tokens else 0
+    )
+
+    return generated_text.strip(), avg_prob_diff, normalized_logprob
 
 
 def generate_branching_responses(
@@ -202,7 +216,10 @@ def generate_branching_responses(
         first_token_text = tokenizer.decode(first_token[0])
         print(f"First token: '{first_token_text}'")
         # if first token is a stop token, skip this branch
-        if any(stop in first_token_text for stop in [".", "\n", "Explanation:", "Answer:", r" \ ", "\\"]):
+        if any(
+            stop in first_token_text
+            for stop in [".", "\n", "Explanation:", "Answer:", r" \ ", "\\"]
+        ):
             print(f"Skipping branch {k+1} because it starts with a stop token")
             continue
         # Create a new branch starting with the k-th most likely token
@@ -224,11 +241,11 @@ def generate_branching_responses(
         }
 
         # Generate the rest of the response for this branch
-        generated_text, confidence_score = generate_single_branch(
+        generated_text, confidence_score, log_prob = generate_single_branch(
             model, tokenizer, max_length, branch_inputs
         )
 
-        responses.append((generated_text, confidence_score))
+        responses.append((generated_text, confidence_score, log_prob))
 
     print("\nAll branches complete\n")
     return responses
