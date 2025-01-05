@@ -78,7 +78,7 @@ def generate_answers(
         full_response = response.strip()
 
         # If the response starts with the prompt (or part of it), remove it
-        if full_response.startswith(prompt[:20]):  # Check first 20 chars to be safe
+        if full_response.startswith(prompt):  
             answer = full_response[prompt_end_index:].strip()
         else:
             # If response doesn't include prompt, use it as is
