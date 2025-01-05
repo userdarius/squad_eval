@@ -325,11 +325,16 @@ def main():
         ]  # Using validation set for evaluation
         logging.info(f"Dataset loaded successfully with {len(dataset)} samples")
 
+        # Shuffle the dataset
+        shuffled_dataset = dataset.shuffle(seed=42)
+        logging.info(f"Dataset shuffled successfully with {len(shuffled_dataset)} samples")
+
+
         # Initialize results storage
         results = []
 
         # Process samples
-        for idx, sample in enumerate(tqdm(dataset)):
+        for idx, sample in enumerate(tqdm(shuffled_dataset)):
             if idx >= 5:  # Limit to 100 samples for testing
                 break
 
