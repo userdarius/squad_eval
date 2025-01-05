@@ -32,7 +32,7 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
     # Just check for basic sentence endings and double newlines
-    stopping_tokens = [".", "\n\n"]
+    stopping_tokens = [".", "\n\n", "\n"]
 
     answers = []
     log_probs = []
@@ -287,7 +287,7 @@ def main():
 
         # Process samples
         for idx, sample in enumerate(tqdm(shuffled_dataset)):
-            if idx >= 10:  # Limit to 10 samples for testing
+            if idx >= 500:  # Limit to 10 samples for testing
                 break
 
             try:
