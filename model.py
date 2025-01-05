@@ -200,7 +200,7 @@ def generate_branching_responses(
         first_token_text = tokenizer.decode(first_token[0])
         print(f"First token: '{first_token_text}'")
         # if first token is a stop token, skip this branch
-        if any(stop in first_token_text for stop in [".", "\n", "Explanation:", "Answer:"]):
+        if any(stop in first_token_text for stop in [".", "\n", "Explanation:", "Answer:", r" \ ", "\\"]):
             print(f"Skipping branch {k+1} because it starts with a stop token")
             continue
         # Create a new branch starting with the k-th most likely token
