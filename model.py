@@ -117,70 +117,40 @@ def generate_single_branch(
     inputs: Dict[str, torch.Tensor],
 ) -> Tuple[List[str], float]:
     """
-    Generate a complete response starting from the given inputs.
+    Generate a complete response with improved stopping conditions.
     """
-
     response = []
     prob_diffs = []
 
+    # Add stopping tokens
+    stop_tokens = [".", "\n", "Explanation:", "Answer:"]
+
     for step in range(max_length):
-        # Get top tokens to calculate probability difference and allow for filtering
-        # Increase num_branches to have more candidates when filtering first token
-        num_candidates = 10 if step == 0 else 2
-        topk_values, topk_indices = get_topk_next_tokens(
-            model, inputs, num_branches=num_candidates
-        )
+        # Get top tokens
+        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=2)
 
-        # Special handling for the first token
-        if step == 0:
-            # Get all candidate tokens as text
-            candidate_tokens = [
-                tokenizer.decode([idx.item()]) for idx in topk_indices[0]
-            ]
+        # Decode current token
+        next_token_text = tokenizer.decode([topk_indices[0, 0].item()])
 
-            # Filter out unwanted starting tokens
-            valid_indices = [
-                i
-                for i, token in enumerate(candidate_tokens)
-                if not (
-                    token.startswith(" ")
-                    or token.startswith('"')
-                    or token.startswith("'")
-                    or token.startswith(".")
-                    or token.startswith(":")
-                    or token.startswith("(")
-                    or token == "\n"
-                )
-            ]
-
-            # If we found valid starting tokens, use the first one
-            if valid_indices:
-                next_token = topk_indices[0, valid_indices[0]].unsqueeze(0)
-                prob_diff = (
-                    (
-                        topk_values[0, valid_indices[0]]
-                        - topk_values[0, valid_indices[1]]
-                    ).item()
-                    if len(valid_indices) > 1
-                    else 1.0
-                )
-            else:
-                # Fallback to original first token if no valid alternatives
+        # Check stopping conditions
+        current_text = tokenizer.decode(torch.cat(response)) if response else ""
+        if any(stop in next_token_text for stop in stop_tokens):
+            # Only add period if it's the first stopping token
+            if next_token_text.strip() == "." and not any(
+                stop in current_text for stop in stop_tokens
+            ):
                 next_token = topk_indices[0, 0].unsqueeze(0)
-                prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
-        else:
-            # Normal token selection for non-first tokens
-            prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
-            next_token = topk_indices[0, 0].unsqueeze(0)
+                response.append(next_token)
+            break
+
+        # Regular token processing
+        prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+        next_token = topk_indices[0, 0].unsqueeze(0)
 
         prob_diffs.append(prob_diff)
         response.append(next_token)
 
-        # Stop if we hit the end token
-        if next_token.item() == tokenizer.eos_token_id:
-            break
-
-        # Update inputs for next iteration
+        # Update inputs
         inputs["input_ids"] = torch.cat(
             [inputs["input_ids"], next_token.unsqueeze(0)], dim=1
         )
@@ -194,11 +164,13 @@ def generate_single_branch(
             )
 
     # Convert token IDs to text
-    generated_tokens = torch.cat(response)
+    generated_tokens = (
+        torch.cat(response) if response else torch.tensor([], device=model.device)
+    )
     generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
 
-    return generated_text, avg_prob_diff
+    return generated_text.strip(), avg_prob_diff
 
 
 def generate_branching_responses(
