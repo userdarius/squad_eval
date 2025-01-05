@@ -16,6 +16,7 @@ from model import (
     load_model_and_tokenizer,
     EntailmentDeberta,
 )
+from transformers import StoppingCriteria, StoppingCriteriaList
 from data import get_dataset
 from scores import (
     context_entails_response,
@@ -27,15 +28,57 @@ from typing import List, Dict
 
 
 def generate_answers(model, tokenizer, question, context, answer, num_samples=10):
-    """Generate multiple answers for a given question and context."""
+    """Generate multiple answers for a given question and context with stopping token handling."""
     prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
+
+    # Define common stopping tokens
+    stopping_tokens = [
+        ".",
+        "!",
+        "?",  # Sentence endings
+        "\n",
+        "\n\n",  # New lines
+        "</s>",  # Common end of sequence token
+        "Answer:",  # Repeat of prompt structure
+        "Question:",  # Repeat of prompt structure
+        "Context:",  # Repeat of prompt structure
+    ]
+
+    # Convert stopping tokens to ids
+    stopping_token_ids = []
+    for token in stopping_tokens:
+        ids = tokenizer.encode(token, add_special_tokens=False)
+        if len(ids) == 1:  # Only add single token sequences to avoid partial matches
+            stopping_token_ids.append(ids[0])
 
     answers = []
     log_probs = []
 
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+        # Custom stopping criteria
+        class StoppingCriteriaSub(StoppingCriteria):
+            def __init__(self, stops=None):
+                super().__init__()
+                self.stops = stops
+
+            def __call__(
+                self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs
+            ) -> bool:
+                if input_ids is None:
+                    return False
+
+                for stop_id in self.stops:
+                    if stop_id in input_ids[0]:
+                        return True
+                return False
+
+        stopping_criteria = StoppingCriteriaList(
+            [StoppingCriteriaSub(stops=stopping_token_ids)]
+        )
+
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
@@ -44,22 +87,31 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
                 output_scores=True,
                 return_dict_in_generate=True,
                 no_repeat_ngram_size=3,
-                length_penalty=1.0,
+                length_penalty=1.2,
                 temperature=0.4,
                 top_p=0.9,
                 pad_token_id=tokenizer.pad_token_id,
+                stopping_criteria=stopping_criteria,  # Add stopping criteria
+                early_stopping=True,  # Enable early stopping
             )
 
         generated_text = tokenizer.decode(
             outputs.sequences[0], skip_special_tokens=True
         )
-        answer = generated_text[len(prompt) :].strip()
-        answers.append(answer)
 
+        # Clean up the generated answer
+        answer = generated_text[len(prompt) :].strip()
+
+        # Post-process to trim at first stopping token
+        for stop_token in stopping_tokens:
+            if stop_token in answer:
+                answer = answer[: answer.index(stop_token) + len(stop_token)]
+                break
+
+        answers.append(answer)
         logging.info(f"Generated answer: {answer}")
 
         # Calculate sequence log probability
-        # Calculate log probabilities
         scores = torch.stack(outputs.scores, dim=1)
         seq_length = outputs.sequences[0, 1:].size(0)
 
