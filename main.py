@@ -122,10 +122,10 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     else:
         print(f"Entailment")
 
-    print(f"Answer entailment score: {answer_entailment_score}")
     answer_entailment_score = context_entails_response(
         sample["answers"]["text"][0], answers, entailment_model
     )
+    print(f"Answer entailment score: {answer_entailment_score}")
     if answer_entailment_score == 0:
         print(f"Contradiction")
     elif answer_entailment_score == 1:
