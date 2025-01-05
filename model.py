@@ -101,7 +101,7 @@ def get_topk_next_tokens(
     Get the top k most likely next tokens and their probabilities.
     """
     with torch.no_grad():
-        outputs = model(**inputs, return_dict=True)
+        outputs = model(**inputs, return_dict=True, temperature=0.4)
         next_token_logits = outputs.logits[:, -1, :]
 
     probabilities = torch.softmax(next_token_logits, dim=-1)
