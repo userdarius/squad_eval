@@ -116,44 +116,42 @@ def generate_single_branch(
     max_length: int,
     inputs: Dict[str, torch.Tensor],
 ) -> Tuple[List[str], float]:
-    """
-    Generate a complete response with improved stopping conditions.
-    """
-    response = []
+    response_tokens = []  # Store raw tokens as a list
     prob_diffs = []
-
-    # Add stopping tokens
-    stop_tokens = [".", "\n", "Explanation:", "Answer:"]
 
     for step in range(max_length):
         topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=10)
-        
-        # Get the raw token first
-        next_token = topk_indices[0, 0]
-        next_token_text = tokenizer.decode([next_token.item()])
-        
+
+        # Get the raw token
+        next_token = topk_indices[0, 0].item()
+        next_token_text = tokenizer.decode([next_token])
+
         # Check stopping conditions using the full sequence
-        current_text = tokenizer.decode(response + [next_token.item()] if response else [next_token.item()])
-        if any(stop in next_token_text for stop in stop_tokens):
-            # Only add period if it's the first stopping token
+        current_tokens = (
+            response_tokens + [next_token] if response_tokens else [next_token]
+        )
+        current_text = tokenizer.decode(current_tokens)
+
+        # Check stopping conditions
+        if any(
+            stop in next_token_text for stop in [".", "\\n", "Explanation:", "Answer:"]
+        ):
             if next_token_text.strip() == "." and not any(
-                stop in current_text for stop in stop_tokens
+                stop in current_text for stop in [".", "\\n", "Explanation:", "Answer:"]
             ):
-                next_token = topk_indices[0, 0].unsqueeze(0)
-                response.append(next_token)
+                response_tokens.append(next_token)
             break
 
         # Regular token processing
         prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
-        next_token = topk_indices[0, 0].unsqueeze(0)
-
+        response_tokens.append(next_token)
         prob_diffs.append(prob_diff)
-        response.append(next_token)
 
-        # Update inputs
-        inputs["input_ids"] = torch.cat(
-            [inputs["input_ids"], next_token.unsqueeze(0)], dim=1
+        # Update inputs - convert single token to tensor
+        next_token_tensor = torch.tensor(
+            [[next_token]], device=inputs["input_ids"].device
         )
+        inputs["input_ids"] = torch.cat([inputs["input_ids"], next_token_tensor], dim=1)
         if "attention_mask" in inputs:
             inputs["attention_mask"] = torch.cat(
                 [
@@ -163,11 +161,8 @@ def generate_single_branch(
                 dim=1,
             )
 
-    # Convert token IDs to text
-    generated_tokens = (
-        torch.cat(response) if response else torch.tensor([], device=model.device)
-    )
-    generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    # Convert token IDs to text at the end
+    generated_text = tokenizer.decode(response_tokens, skip_special_tokens=True)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
 
     return generated_text.strip(), avg_prob_diff
@@ -187,7 +182,6 @@ def generate_branching_responses(
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
