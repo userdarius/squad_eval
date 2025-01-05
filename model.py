@@ -179,6 +179,8 @@ def generate_branching_responses(
 ) -> List[Tuple[str, float]]:
     """
     Generate multiple responses by exploring different initial tokens.
+    Confidence score is the average probability difference between the top 2 tokens.
+    confidence score is in the range [0, 1] where 1 is the highest confidence.
     """
 
     # Tokenize the prompt

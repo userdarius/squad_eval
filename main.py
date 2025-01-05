@@ -69,11 +69,11 @@ def generate_answers(
 
     # Separate answers and probabilities
     answers = []
-    log_probs = []
+    confidence_scores = []
 
     prompt_end_index = len(prompt.strip())
 
-    for response, prob in responses:
+    for response, confidence_score in responses:
         # Extract just the answer part, making sure to handle the full response correctly
         full_response = response.strip()
 
@@ -87,17 +87,17 @@ def generate_answers(
         # Only add non-empty answers
         if answer:
             answers.append(answer)
-            log_probs.append(prob)
+            confidence_scores.append(confidence_score)
 
             logging.info(f"Generated answer: {answer}")
-            logging.info(f"Log probability: {prob}")
+            logging.info(f"Confidence score: {confidence_score}")
 
-    return answers, log_probs
+    return answers, confidence_scores
 
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
-    answers, log_probs = generate_answers(
+    answers, confidence_scores = generate_answers(
         model,
         tokenizer,
         sample["question"],
@@ -109,7 +109,7 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     semantic_ids = get_semantic_ids(answers, entailment_model)
 
     # Calculate metrics
-    pred_entropy = predictive_entropy(np.array(log_probs))
+    pred_entropy = predictive_entropy(np.array(confidence_scores))
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
