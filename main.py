@@ -202,20 +202,97 @@ def save_results(results, output_file):
     # Calculate and log summary statistics for all numeric columns
     numeric_columns = df.select_dtypes(include=[np.number]).columns
     metrics = {
-        f"mean_{col}": df[col].mean() for col in numeric_columns
+        f"mean_{col}": df[col].mean()
+        for col in numeric_columns
         if col not in ["question_id"] and not df[col].isna().all()
     }
 
     # Add standard deviations for key metrics
-    metrics.update({
-        f"std_{col}": df[col].std() for col in numeric_columns
-        if col not in ["question_id"] and not df[col].isna().all()
-    })
+    metrics.update(
+        {
+            f"std_{col}": df[col].std()
+            for col in numeric_columns
+            if col not in ["question_id"] and not df[col].isna().all()
+        }
+    )
 
     with open(output_file.replace(".csv", "_summary.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
+    output_prefix = output_file.replace(".csv", "")
+    create_visualizations(df, output_prefix)
+
     return metrics
+
+
+def create_visualizations(df: pd.DataFrame, output_prefix: str):
+    """Create and save various visualizations from the results DataFrame."""
+
+    # Set up the style
+    plt.style.use("seaborn")
+
+    # 1. Correlation Heatmap of Numeric Metrics
+    plt.figure(figsize=(12, 10))
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    correlation_matrix = df[numeric_cols].corr()
+    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
+    plt.title("Correlation Between Uncertainty Metrics")
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_correlation_heatmap.png")
+    plt.close()
+
+    # 2. Joint Plot of Entropies
+    plt.figure(figsize=(10, 6))
+    sns.jointplot(
+        data=df,
+        x="predictive_entropy",
+        y="cluster_entropy",
+        kind="scatter",
+        joint_kws={"alpha": 0.5},
+    )
+    plt.suptitle("Relationship Between Predictive and Cluster Entropy")
+    plt.savefig(f"{output_prefix}_entropy_relationship.png")
+    plt.close()
+
+    # 3. Distribution of Semantic Clusters
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(data=df, y="num_semantic_clusters")
+    plt.title("Distribution of Number of Semantic Clusters")
+    plt.savefig(f"{output_prefix}_semantic_clusters_dist.png")
+    plt.close()
+
+    # 4. Confidence vs Agreement Plot
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(
+        data=df, x="high_confidence_entailment", y="semantic_agreement_score", alpha=0.6
+    )
+    plt.title("Confidence vs Semantic Agreement")
+    plt.xlabel("High Confidence Entailment")
+    plt.ylabel("Semantic Agreement Score")
+    plt.savefig(f"{output_prefix}_confidence_agreement.png")
+    plt.close()
+
+    # 5. Multiple Metric Comparison
+    metrics_to_compare = [
+        "predictive_entropy",
+        "cluster_entropy",
+        "context_answer_entailment_gap",
+        "response_diversity",
+    ]
+    plt.figure(figsize=(12, 6))
+    df[metrics_to_compare].boxplot()
+    plt.xticks(rotation=45)
+    plt.title("Distribution of Key Uncertainty Metrics")
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_metrics_distribution.png")
+    plt.close()
+
+    # 6. Sequence Length vs Log Probability
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x="mean_sequence_length", y="max_logprob", alpha=0.6)
+    plt.title("Sequence Length vs Maximum Log Probability")
+    plt.savefig(f"{output_prefix}_length_vs_probability.png")
+    plt.close()
 
 
 def main():
