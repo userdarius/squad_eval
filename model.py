@@ -173,7 +173,7 @@ def generate_single_branch(
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
 
     # print(f"Final generated text length: {len(generated_text)}")
-    print(f"Final generated text for single branch: '{generated_text}'")
+    # print(f"Final generated text for single branch: '{generated_text}'")
     # print(f"Average probability difference: {avg_prob_diff:.4f}")
 
     return generated_text, avg_prob_diff
@@ -203,7 +203,7 @@ def generate_branching_responses(
     # Log initial token choices
     for k in range(num_branches):
         token_text = tokenizer.decode(topk_indices[0, k])
-        # print(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
+        print(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
 
     responses = []
     for k in range(num_branches):
@@ -234,7 +234,7 @@ def generate_branching_responses(
         responses.append((generated_text, confidence_score))
         # print(f"Branch {k+1} complete:")
         print(f"Generated text: '{generated_text}'")
-        # print(f"Confidence score: {confidence_score:.4f}")
+        print(f"Confidence score: {confidence_score:.4f}")
 
     print("\nAll branches complete")
     return responses
