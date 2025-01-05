@@ -95,7 +95,10 @@ class EntailmentDeberta(BaseEntailment):
 
 ### Branching Model ###
 def get_topk_next_tokens(
-    model: AutoModelForCausalLM, inputs: Dict[str, torch.Tensor], num_branches: int
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    inputs: Dict[str, torch.Tensor],
+    num_branches: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Get the top k most likely next tokens and their probabilities.
@@ -131,7 +134,7 @@ def generate_single_branch(
 
     for _ in range(max_length):
         # Get top 2 tokens for probability difference
-        topk_values, topk_indices = get_topk_next_tokens(model, inputs, 2)
+        topk_values, topk_indices = get_topk_next_tokens(model, tokenizer, inputs, 2)
 
         # Calculate confidence score
         prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
@@ -173,7 +176,7 @@ def generate_branching_responses(
 
     # Get initial top tokens
     topk_values, topk_indices = get_topk_next_tokens(
-        model, inputs, num_branches * 2
+        model, tokenizer, inputs, num_branches * 2
     )  # Get more initial tokens
 
     responses = []
