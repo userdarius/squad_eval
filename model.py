@@ -101,16 +101,11 @@ def get_topk_next_tokens(
     Get the top k most likely next tokens and their probabilities.
     """
     with torch.no_grad():
-        outputs = model(**inputs, return_dict=True, skip_special_tokens=True)
+        outputs = model(**inputs, return_dict=True)
         next_token_logits = outputs.logits[:, -1, :]
 
-    probabilities = F.softmax(next_token_logits, dim=-1)
+    probabilities = torch.softmax(next_token_logits, dim=-1)
     topk_values, topk_indices = torch.topk(probabilities, num_branches)
-
-    # Log the top token indices and their probabilities
-    for i in range(num_branches):
-        # print(f"Top token {i+1}: index={topk_indices[0,i].item()}, prob={topk_values[0,i].item():.4f}")
-        pass
 
     return topk_values, topk_indices
 
@@ -124,34 +119,56 @@ def generate_single_branch(
     """
     Generate a complete response starting from the given inputs.
     """
-    # print("Starting single branch generation...")
-    # print(f"Initial input shape: {inputs['input_ids'].shape}")
 
     response = []
     prob_diffs = []
 
     for step in range(max_length):
-        # Get top 2 most likely tokens to calculate probability difference
-        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=2)
+        # Get top tokens to calculate probability difference and allow for filtering
+        # Increase num_branches to have more candidates when filtering first token
+        num_candidates = 10 if step == 0 else 2
+        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=num_candidates)
 
-        # Calculate probability difference between top two tokens
-        prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+        # Special handling for the first token
+        if step == 0:
+            # Get all candidate tokens as text
+            candidate_tokens = [
+                tokenizer.decode([idx.item()]) 
+                for idx in topk_indices[0]
+            ]
+            
+            # Filter out unwanted starting tokens
+            valid_indices = [
+                i for i, token in enumerate(candidate_tokens)
+                if not (token.startswith(' ') or 
+                       token.startswith('"') or 
+                       token.startswith("'") or
+                       token.startswith('.') or
+                       token.startswith(':') or
+                       token.startswith('(') or
+                       token == '\n' 
+                )
+            ]
+        
+            
+            # If we found valid starting tokens, use the first one
+            if valid_indices:
+                next_token = topk_indices[0, valid_indices[0]].unsqueeze(0)
+                prob_diff = (topk_values[0, valid_indices[0]] - topk_values[0, valid_indices[1]]).item() if len(valid_indices) > 1 else 1.0
+            else:
+                # Fallback to original first token if no valid alternatives
+                next_token = topk_indices[0, 0].unsqueeze(0)
+                prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+        else:
+            # Normal token selection for non-first tokens
+            prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+            next_token = topk_indices[0, 0].unsqueeze(0)
+
         prob_diffs.append(prob_diff)
-
-        # Add most likely token to response
-        next_token = topk_indices[0, 0].unsqueeze(0)
         response.append(next_token)
-
-        # Log current token and running text
-        current_token_text = tokenizer.decode(next_token, skip_special_tokens=True)
-        # print(f"Step {step}: Generated token: {current_token_text} (id={next_token.item()})")
-        if step % 5 == 0:  # Log running text every 5 tokens
-            running_text = tokenizer.decode(torch.cat(response), skip_special_tokens=True)
-            # print(f"Running text at step {step}: {running_text}")
 
         # Stop if we hit the end token
         if next_token.item() == tokenizer.eos_token_id:
-            # print("Reached end token, stopping generation")
             break
 
         # Update inputs for next iteration
@@ -171,10 +188,6 @@ def generate_single_branch(
     generated_tokens = torch.cat(response)
     generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
-
-    # print(f"Final generated text length: {len(generated_text)}")
-    # print(f"Final generated text for single branch: '{generated_text}'")
-    # print(f"Average probability difference: {avg_prob_diff:.4f}")
 
     return generated_text, avg_prob_diff
 
