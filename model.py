@@ -126,14 +126,14 @@ def generate_single_branch(
     stop_tokens = [".", "\n", "Explanation:", "Answer:"]
 
     for step in range(max_length):
-        # Get top tokens
         topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=10)
-
-        # Decode current token
-        next_token_text = tokenizer.decode([topk_indices[0, 0].item()])
-
-        # Check stopping conditions
-        current_text = tokenizer.decode(torch.cat(response)) if response else ""
+        
+        # Get the raw token first
+        next_token = topk_indices[0, 0]
+        next_token_text = tokenizer.decode([next_token.item()])
+        
+        # Check stopping conditions using the full sequence
+        current_text = tokenizer.decode(response + [next_token.item()] if response else [next_token.item()])
         if any(stop in next_token_text for stop in stop_tokens):
             # Only add period if it's the first stopping token
             if next_token_text.strip() == "." and not any(
