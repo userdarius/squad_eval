@@ -225,7 +225,7 @@ def generate_branching_responses(
     # Log initial token choices
     for k in range(num_branches):
         token_text = tokenizer.decode(topk_indices[0, k])
-        print(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
+        print(f"Initial token {k+1}: {token_text} (prob: {topk_values[0,k]:.4f})")
 
     responses = []
     for k in range(num_branches):
@@ -255,7 +255,7 @@ def generate_branching_responses(
 
         responses.append((generated_text, confidence_score))
         # print(f"Branch {k+1} complete:")
-        print(f"Generated text: '{generated_text}'")
+        print(f"Generated text: {generated_text}")
         print(f"Confidence score: {confidence_score:.4f}")
 
     print("\nAll branches complete")
