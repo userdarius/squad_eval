@@ -3,23 +3,55 @@ from sklearn.metrics.pairwise import cosine_similarity
 import logging
 
 
+def check_semantic_equivalence(text1, text2, model):
+    """
+    More nuanced semantic equivalence check
+    Returns:
+    - 2 if both texts fully entail each other
+    - 1.5 if one fully entails (2) and other is neutral (1)
+    - 1 if both are neutral
+    - 0 if either shows contradiction
+    """
+    forward = model.check_implication(text1, text2)
+    backward = model.check_implication(text2, text1)
+
+    if forward == 2 and backward == 2:
+        return 2  # Full equivalence
+    elif (forward == 2 and backward == 1) or (forward == 1 and backward == 2):
+        return 1.5  # Strong partial match
+    elif forward == 1 and backward == 1:
+        return 1  # Weak partial match
+    elif forward == 0 or backward == 0:
+        return 0  # Contradiction
+    else:
+        return forward  # Default to forward score for other cases
+
+
 def context_entails_response(context, responses, model):
     """
-    Check if each summary is entailed by the context (document)
-    Returns the average entailment score across all summaries
-    0 = contradiction
-    1 = neutral
-    2 = entailment
+    Enhanced version that handles near-synonyms better
     """
     votes = []
-    for idx, response in enumerate(responses):
-        vote = model.check_implication(response, context)
-        print(
-            f"Entailment score: {vote} ({['contradiction', 'neutral', 'entailment'][vote]})\n"
-        )
-        votes.append(vote)
+    for response in responses:
+        # First check direct entailment
+        direct_score = model.check_implication(response, context)
+
+        # If it's a contradiction, check for semantic equivalence
+        if direct_score == 0:
+            semantic_score = check_semantic_equivalence(response, context, model)
+            votes.append(semantic_score)
+        else:
+            votes.append(direct_score)
+
+        print(f"Response: {response}")
+        print(f"Direct entailment score: {direct_score}")
+        if direct_score == 0:
+            print(f"Semantic equivalence score: {semantic_score}")
+        print()
 
     mean_score = np.mean(votes)
+    print(f"All votes: {votes}")
+    print(f"Mean entailment score: {mean_score}")
     return mean_score
 
 

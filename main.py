@@ -101,6 +101,9 @@ def generate_answers(
 
     return answers, confidence_scores, log_probs
 
+def normalize_answer(text):
+    """Normalize answer text by removing periods and extra whitespace"""
+    return text.rstrip(".")
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
@@ -111,6 +114,9 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         sample["context"],
         sample["answers"]["text"][0],
     )
+
+    # Normalize answers
+    answers = [normalize_answer(answer) for answer in answers]
 
     # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
