@@ -116,30 +116,30 @@ def generate_single_branch(
     max_length: int,
     inputs: Dict[str, torch.Tensor],
 ) -> Tuple[List[str], float]:
-    response_tokens = []  # Store raw tokens as a list
+    # Initialize response_tokens with the first token from the input
+    response_tokens = [
+        inputs["input_ids"][0, -1].item()
+    ]  # Get the last token from inputs
     prob_diffs = []
+
+    print(f"Starting with initial token: '{tokenizer.decode([response_tokens[0]])}'")
 
     for step in range(max_length):
         topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=10)
 
-        # Get the raw token
         next_token = topk_indices[0, 0].item()
         next_token_text = tokenizer.decode([next_token])
-        print(f"Step {step}: Token {next_token} -> '{next_token_text}'")
 
-        # Check stopping conditions using the full sequence
-        current_tokens = (
-            response_tokens + [next_token] if response_tokens else [next_token]
-        )
-        current_text = tokenizer.decode(current_tokens)
+        current_text = tokenizer.decode(response_tokens + [next_token])
+        print(f"Step {step}: Token {next_token} -> '{next_token_text}'")
         print(f"Current text: '{current_text}'")
 
         # Check stopping conditions
         if any(
-            stop in next_token_text for stop in [".", "\\n", "Explanation:", "Answer:"]
+            stop in next_token_text for stop in [".", "\n", "Explanation:", "Answer:"]
         ):
             if next_token_text.strip() == "." and not any(
-                stop in current_text for stop in [".", "\\n", "Explanation:", "Answer:"]
+                stop in current_text for stop in [".", "\n", "Explanation:", "Answer:"]
             ):
                 response_tokens.append(next_token)
             break
@@ -149,7 +149,7 @@ def generate_single_branch(
         response_tokens.append(next_token)
         prob_diffs.append(prob_diff)
 
-        # Update inputs - convert single token to tensor
+        # Update inputs
         next_token_tensor = torch.tensor(
             [[next_token]], device=inputs["input_ids"].device
         )
