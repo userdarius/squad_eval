@@ -52,7 +52,7 @@ def generate_answers(
     Returns:
         Tuple of (list of answers, list of log probabilities)
     """
-    prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
+    prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
     # Use our branching generation method
