@@ -189,52 +189,97 @@ def generate_branching_responses(
     """
     Generate multiple responses by exploring different initial tokens.
     """
-    # print(f"Starting branching generation with {num_branches} branches")
-    # print(f"Prompt: '{prompt}'")
-
     # Tokenize the prompt
     inputs = tokenizer(prompt, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    # print(f"Tokenized prompt shape: {inputs['input_ids'].shape}")
 
     # Get initial top k tokens
     topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches)
 
-    # Log initial token choices
+    # Filter initial tokens to only start with valid word beginnings
+    valid_responses = []
     for k in range(num_branches):
-        token_text = tokenizer.decode(topk_indices[0, k])
-        # print(f"Initial token {k+1}: '{token_text}' (prob: {topk_values[0,k]:.4f})")
+        initial_token = topk_indices[0, k]
+        token_text = tokenizer.decode(initial_token)
 
-    responses = []
-    for k in range(num_branches):
-        # print(f"\nGenerating branch {k+1}/{num_branches}")
-        # Create a new branch starting with the k-th most likely token
-        branch_inputs = {
-            "input_ids": torch.cat(
-                [inputs["input_ids"], topk_indices[:, k : k + 1]], dim=1
-            ),
-            "attention_mask": (
-                torch.cat(
-                    [
-                        inputs["attention_mask"],
-                        torch.ones((1, 1), device=inputs["attention_mask"].device),
-                    ],
+        # Skip if token starts with an apostrophe, space, or partial word
+        if token_text.strip() and not token_text.startswith(("'", " ", ".")):
+            # Create a new branch starting with this token
+            branch_inputs = {
+                "input_ids": torch.cat(
+                    [inputs["input_ids"], initial_token.unsqueeze(0).unsqueeze(0)],
                     dim=1,
+                ),
+                "attention_mask": (
+                    torch.cat(
+                        [
+                            inputs["attention_mask"],
+                            torch.ones((1, 1), device=inputs["attention_mask"].device),
+                        ],
+                        dim=1,
+                    )
+                    if "attention_mask" in inputs
+                    else None
+                ),
+            }
+
+            # Generate the rest of the response for this branch
+            generated_text, confidence_score = generate_single_branch(
+                model, tokenizer, max_length, branch_inputs
+            )
+
+            # Only add if the generated text forms a complete thought
+            if not any(generated_text.startswith(char) for char in "'.,") and not any(
+                generated_text.endswith(char) for char in "' "
+            ):
+                valid_responses.append((generated_text, confidence_score))
+
+        # If we don't have enough valid responses, try the next tokens
+        if len(valid_responses) < num_branches:
+            continue
+
+    # If we still don't have enough responses, get more initial tokens
+    while len(valid_responses) < num_branches:
+        # Get next batch of top tokens
+        num_additional = num_branches - len(valid_responses)
+        _, additional_indices = get_topk_next_tokens(model, inputs, num_additional + 5)
+
+        for k in range(num_additional + 5):
+            if len(valid_responses) >= num_branches:
+                break
+
+            initial_token = additional_indices[0, k]
+            token_text = tokenizer.decode(initial_token)
+
+            if token_text.strip() and not token_text.startswith(("'", " ", ".")):
+                branch_inputs = {
+                    "input_ids": torch.cat(
+                        [inputs["input_ids"], initial_token.unsqueeze(0).unsqueeze(0)],
+                        dim=1,
+                    ),
+                    "attention_mask": (
+                        torch.cat(
+                            [
+                                inputs["attention_mask"],
+                                torch.ones(
+                                    (1, 1), device=inputs["attention_mask"].device
+                                ),
+                            ],
+                            dim=1,
+                        )
+                        if "attention_mask" in inputs
+                        else None
+                    ),
+                }
+
+                generated_text, confidence_score = generate_single_branch(
+                    model, tokenizer, max_length, branch_inputs
                 )
-                if "attention_mask" in inputs
-                else None
-            ),
-        }
 
-        # Generate the rest of the response for this branch
-        generated_text, confidence_score = generate_single_branch(
-            model, tokenizer, max_length, branch_inputs
-        )
-
-        responses.append((generated_text, confidence_score))
-        # print(f"Branch {k+1} complete:")
-        print(f"Generated text: '{generated_text}'")
-        # print(f"Confidence score: {confidence_score:.4f}")
+                if not any(
+                    generated_text.startswith(char) for char in "'.,"
+                ) and not any(generated_text.endswith(char) for char in "' "):
+                    valid_responses.append((generated_text, confidence_score))
 
     print("\nAll branches complete")
-    return responses
+    return valid_responses[:num_branches]
