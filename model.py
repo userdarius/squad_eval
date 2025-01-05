@@ -127,34 +127,44 @@ def generate_single_branch(
         # Get top tokens to calculate probability difference and allow for filtering
         # Increase num_branches to have more candidates when filtering first token
         num_candidates = 10 if step == 0 else 2
-        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=num_candidates)
+        topk_values, topk_indices = get_topk_next_tokens(
+            model, inputs, num_branches=num_candidates
+        )
 
         # Special handling for the first token
         if step == 0:
             # Get all candidate tokens as text
             candidate_tokens = [
-                tokenizer.decode([idx.item()]) 
-                for idx in topk_indices[0]
+                tokenizer.decode([idx.item()]) for idx in topk_indices[0]
             ]
-            
+
             # Filter out unwanted starting tokens
             valid_indices = [
-                i for i, token in enumerate(candidate_tokens)
-                if not (token.startswith(' ') or 
-                       token.startswith('"') or 
-                       token.startswith("'") or
-                       token.startswith('.') or
-                       token.startswith(':') or
-                       token.startswith('(') or
-                       token == '\n' 
+                i
+                for i, token in enumerate(candidate_tokens)
+                if not (
+                    token.startswith(" ")
+                    or token.startswith('"')
+                    or token.startswith("'")
+                    or token.startswith(".")
+                    or token.startswith(":")
+                    or token.startswith("(")
+                    or token == "\n"
+                    or token.startswith(" '")
                 )
             ]
-        
-            
+
             # If we found valid starting tokens, use the first one
             if valid_indices:
                 next_token = topk_indices[0, valid_indices[0]].unsqueeze(0)
-                prob_diff = (topk_values[0, valid_indices[0]] - topk_values[0, valid_indices[1]]).item() if len(valid_indices) > 1 else 1.0
+                prob_diff = (
+                    (
+                        topk_values[0, valid_indices[0]]
+                        - topk_values[0, valid_indices[1]]
+                    ).item()
+                    if len(valid_indices) > 1
+                    else 1.0
+                )
             else:
                 # Fallback to original first token if no valid alternatives
                 next_token = topk_indices[0, 0].unsqueeze(0)
