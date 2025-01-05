@@ -127,7 +127,7 @@ def generate_single_branch(
 
     for step in range(max_length):
         # Get top tokens
-        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=2)
+        topk_values, topk_indices = get_topk_next_tokens(model, inputs, num_branches=10)
 
         # Decode current token
         next_token_text = tokenizer.decode([topk_indices[0, 0].item()])
