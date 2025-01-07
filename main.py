@@ -35,6 +35,7 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
     stopping_tokens = [".", "\n\n", "\n"]
     answers = []
     log_probs = []
+    confidence_scores = []  # Added to match branching output
 
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -64,7 +65,7 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
                 answer = answer[: answer.index(stop_token) + len(stop_token)]
                 break
 
-        # Calculate sequence log probability
+        # Calculate sequence log probability and confidence score
         scores = torch.stack(outputs.scores, dim=1)  # [1, seq_length, vocab_size]
         sequence = outputs.sequences[
             0, inputs["input_ids"].size(1) :
@@ -72,25 +73,36 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
         seq_length = sequence.size(0)
 
         if seq_length > 0:  # Only process if we generated new tokens
-            # Calculate log probabilities for each token
             log_probs_per_token = []
+            confidence_per_token = []  # Added for confidence calculation
 
             for i in range(min(seq_length, scores.size(1))):
-                # Use log_softmax for numerical stability
+                # Calculate token probabilities
+                token_probs = F.softmax(scores[0, i], dim=-1)
+                top_probs, _ = torch.topk(token_probs, k=2)
+
+                # Calculate confidence as prob difference (like branching)
+                token_confidence = (top_probs[0] - top_probs[1]).item()
+                confidence_per_token.append(token_confidence)
+
+                # Calculate log probability
                 token_log_probs = F.log_softmax(scores[0, i], dim=-1)
                 token_log_prob = token_log_probs[sequence[i]].item()
                 log_probs_per_token.append(token_log_prob)
 
-            # Calculate normalized sequence log probability
+            # Calculate normalized scores
             sequence_log_prob = sum(log_probs_per_token) / len(log_probs_per_token)
+            avg_confidence = sum(confidence_per_token) / len(confidence_per_token)
 
             answers.append(answer)
             log_probs.append(sequence_log_prob)
+            confidence_scores.append(avg_confidence)
 
             logging.info(f"Generated answer: {answer}")
             logging.info(f"Log probability: {sequence_log_prob}")
+            logging.info(f"Confidence score: {avg_confidence}")
 
-    return answers, log_probs
+    return answers, confidence_scores, log_probs
 
 
 def normalize_answer(text):
@@ -100,7 +112,7 @@ def normalize_answer(text):
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
-    answers, log_probs = generate_answers(
+    answers, confidence_scores, log_probs = generate_answers(
         model,
         tokenizer,
         sample["question"],
@@ -154,6 +166,7 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "context_entailment_score": context_entailment_score,
         "answer_entailment_score": answer_entailment_score,
         "semantic_clusters": semantic_ids,
+        "confidence_scores": confidence_scores,
         "log_probabilities": log_probs,
         "mean_sequence_length": np.mean([len(a.split()) for a in answers]),
         "response_diversity": len(set(answers)) / len(answers),
@@ -165,9 +178,15 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "cluster_size_std": np.std(semantic_cluster_counts),
         "majority_answer_frequency": max(semantic_cluster_counts) / len(semantic_ids),
         "semantic_agreement_score": len(set(semantic_ids)) / len(answers),
+        "logprob_confidence_correlation": np.corrcoef(log_probs, confidence_scores)[
+            0, 1
+        ],
         "entropy_cluster_correlation": abs(pred_entropy - cluster_entropy),
         "context_answer_entailment_gap": abs(
             context_entailment_score - answer_entailment_score
+        ),
+        "high_confidence_entailment": np.mean(
+            [c for c, s in zip(confidence_scores, semantic_ids) if s == semantic_ids[0]]
         ),
     }
 
