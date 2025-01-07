@@ -310,6 +310,7 @@ def main():
                 if (idx + 1) % 10 == 0:
                     logging.info(f"Processed {idx + 1} samples")
 
+                torch.cuda.empty_cache()
             except Exception as e:
                 logging.error(f"Error processing sample {idx}: {str(e)}", exc_info=True)
                 continue
