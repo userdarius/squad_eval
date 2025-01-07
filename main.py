@@ -35,7 +35,7 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
     stopping_tokens = [".", "\n\n", "\n"]
     answers = []
     log_probs = []
-    confidence_scores = []  # Added to match branching output
+    confidence_scores = []
 
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -57,24 +57,22 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
         # Get generated text
         generated_sequence = outputs.sequences[0]
         generated_text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-        answer = generated_text[len(prompt) :].strip()
+        answer = generated_text[len(prompt):].strip()
 
         # Post-process answer
         for stop_token in stopping_tokens:
             if stop_token in answer:
-                answer = answer[: answer.index(stop_token) + len(stop_token)]
+                answer = answer[:answer.index(stop_token) + len(stop_token)]
                 break
 
         # Calculate sequence log probability and confidence score
-        scores = torch.stack(outputs.scores, dim=1)  # [1, seq_length, vocab_size]
-        sequence = outputs.sequences[
-            0, inputs["input_ids"].size(1) :
-        ]  # Only get new tokens
+        scores = torch.stack(outputs.scores, dim=1)
+        sequence = outputs.sequences[0, inputs["input_ids"].size(1):]  # Only get new tokens
         seq_length = sequence.size(0)
 
-        if seq_length > 0:  # Only process if we generated new tokens
+        if seq_length > 0:
             log_probs_per_token = []
-            confidence_per_token = []  # Added for confidence calculation
+            confidence_per_token = []
 
             for i in range(min(seq_length, scores.size(1))):
                 # Calculate token probabilities
@@ -90,16 +88,16 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
                 token_log_prob = token_log_probs[sequence[i]].item()
                 log_probs_per_token.append(token_log_prob)
 
-            # Calculate normalized scores
-            sequence_log_prob = sum(log_probs_per_token) / len(log_probs_per_token)
-            avg_confidence = sum(confidence_per_token) / len(confidence_per_token)
+            # Use raw sum instead of normalized average
+            sequence_log_prob = sum(log_probs_per_token)  # Removed normalization
+            avg_confidence = sum(confidence_per_token) / len(confidence_per_token)  # Keep confidence normalized
 
             answers.append(answer)
             log_probs.append(sequence_log_prob)
             confidence_scores.append(avg_confidence)
 
             logging.info(f"Generated answer: {answer}")
-            logging.info(f"Log probability: {sequence_log_prob}")
+            logging.info(f"Raw log probability: {sequence_log_prob}")  # Updated log message
             logging.info(f"Confidence score: {avg_confidence}")
 
     return answers, confidence_scores, log_probs
@@ -128,7 +126,9 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
 
     # Calculate metrics
     pred_entropy = predictive_entropy(np.array(log_probs))
+    print(f"Predictive entropy: {pred_entropy}")
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
+    print(f"Cluster assignment entropy: {cluster_entropy}")
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
     )
