@@ -258,6 +258,17 @@ def create_visualizations(df: pd.DataFrame, output_prefix: str):
     plt.savefig(f"{output_prefix}_semantic_clusters_dist.png")
     plt.close()
 
+    # 4. Confidence vs Agreement Plot
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(
+        data=df, x="high_confidence_entailment", y="semantic_agreement_score", alpha=0.6
+    )
+    plt.title("Confidence vs Semantic Agreement")
+    plt.xlabel("High Confidence Entailment")
+    plt.ylabel("Semantic Agreement Score")
+    plt.savefig(f"{output_prefix}_confidence_agreement.png")
+    plt.close()
+
     # 5. Multiple Metric Comparison
     metrics_to_compare = [
         "predictive_entropy",
