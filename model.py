@@ -135,9 +135,6 @@ def generate_single_branch(
         next_token = topk_indices[0, 0].item()
         next_token_text = tokenizer.decode([next_token])
 
-        # Add log probability of chosen token
-        sequence_logprob += topk_logprobs[0, 0].item()
-
         current_text = tokenizer.decode(response_tokens + [next_token])
         print(f"Step {step}: Token {next_token} -> '{next_token_text}'")
         print(f"Current text: '{current_text}'")
@@ -155,6 +152,7 @@ def generate_single_branch(
 
         # Regular token processing
         prob_diff = (topk_values[0, 0] - topk_values[0, 1]).item()
+        sequence_logprob += topk_logprobs[0, 0].item()  
         response_tokens.append(next_token)
         prob_diffs.append(prob_diff)
 
@@ -176,12 +174,7 @@ def generate_single_branch(
     generated_text = tokenizer.decode(response_tokens, skip_special_tokens=True)
     avg_prob_diff = sum(prob_diffs) / len(prob_diffs) if prob_diffs else 0
 
-    # Normalize log probability by sequence length
-    normalized_logprob = (
-        sequence_logprob / len(response_tokens) if response_tokens else 0
-    )
-
-    return generated_text.strip(), avg_prob_diff, normalized_logprob
+    return generated_text.strip(), avg_prob_diff, sequence_logprob
 
 
 def generate_branching_responses(
