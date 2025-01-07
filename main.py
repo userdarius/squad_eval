@@ -24,6 +24,7 @@ from scores import (
     cluster_assignment_entropy,
 )
 from typing import List, Dict
+import torch.nn.functional as F
 
 
 def generate_answers(model, tokenizer, question, context, answer, num_samples=10):
@@ -31,14 +32,13 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
     prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
-    # Just check for basic sentence endings and double newlines
     stopping_tokens = [".", "\n\n", "\n"]
-
     answers = []
     log_probs = []
 
     for _ in range(num_samples):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
@@ -53,37 +53,42 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
                 pad_token_id=tokenizer.pad_token_id,
             )
 
-        generated_text = tokenizer.decode(
-            outputs.sequences[0], skip_special_tokens=True
-        )
+        # Get generated text
+        generated_sequence = outputs.sequences[0]
+        generated_text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
         answer = generated_text[len(prompt) :].strip()
 
-        # Simple post-processing to trim at first stopping token
+        # Post-process answer
         for stop_token in stopping_tokens:
             if stop_token in answer:
                 answer = answer[: answer.index(stop_token) + len(stop_token)]
                 break
 
-        answers.append(answer)
-        logging.info(f"Generated answer: {answer}")
-
         # Calculate sequence log probability
-        scores = torch.stack(outputs.scores, dim=1)
-        seq_length = outputs.sequences[0, 1:].size(0)
+        scores = torch.stack(outputs.scores, dim=1)  # [1, seq_length, vocab_size]
+        sequence = outputs.sequences[
+            0, inputs["input_ids"].size(1) :
+        ]  # Only get new tokens
+        seq_length = sequence.size(0)
 
-        if seq_length > scores.size(1):
-            seq_length = scores.size(1)
-            sequence = outputs.sequences[0, 1 : seq_length + 1]
-        else:
-            sequence = outputs.sequences[0, 1 : seq_length + 1]
+        if seq_length > 0:  # Only process if we generated new tokens
+            # Calculate log probabilities for each token
+            log_probs_per_token = []
 
-        token_probs = torch.softmax(scores[0, :seq_length], dim=-1)
-        token_log_probs = torch.log(
-            token_probs.gather(-1, sequence.unsqueeze(-1)) + 1e-10
-        )
-        log_prob = torch.sum(token_log_probs).item()
-        logging.info(f"Log probability: {log_prob}")
-        log_probs.append(log_prob)
+            for i in range(min(seq_length, scores.size(1))):
+                # Use log_softmax for numerical stability
+                token_log_probs = F.log_softmax(scores[0, i], dim=-1)
+                token_log_prob = token_log_probs[sequence[i]].item()
+                log_probs_per_token.append(token_log_prob)
+
+            # Calculate normalized sequence log probability
+            sequence_log_prob = sum(log_probs_per_token) / len(log_probs_per_token)
+
+            answers.append(answer)
+            log_probs.append(sequence_log_prob)
+
+            logging.info(f"Generated answer: {answer}")
+            logging.info(f"Log probability: {sequence_log_prob}")
 
     return answers, log_probs
 
