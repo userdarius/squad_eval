@@ -225,7 +225,9 @@ def save_results(results: List[Dict], output_file: str) -> Dict:
 
 
 def create_visualizations(df: pd.DataFrame, output_prefix: str):
-    """Create visualization plots for the results."""
+    """Create and save various visualizations from the results DataFrame."""
+
+    # Set up the style
     plt.style.use("seaborn")
 
     # 1. Correlation Heatmap of Numeric Metrics
@@ -269,6 +271,42 @@ def create_visualizations(df: pd.DataFrame, output_prefix: str):
     plt.savefig(f"{output_prefix}_confidence_agreement.png")
     plt.close()
 
+    # Entailment-based metrics
+    plt.figure(figsize=(12, 8))
+
+    metrics = [
+        "context_answer_entailment_gap",
+        "high_confidence_entailment",
+        "entropy_cluster_correlation",
+    ]
+
+    plt.figure(figsize=(15, 5))
+    for idx, metric in enumerate(metrics, 1):
+        plt.subplot(1, 3, idx)
+        sns.kdeplot(data=df[metric], fill=True)
+        plt.title(f"{metric} Distribution")
+        plt.xlabel(metric)
+
+    plt.tight_layout()
+    plt.savefig("entailment_analysis.png")
+    plt.close()
+
+    # Sequence-based metrics
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle("Sequence Metrics Analysis")
+
+    sns.boxplot(data=df["mean_sequence_length"], ax=axes[0])
+    axes[0].set_title("Mean Sequence Length Distribution")
+    axes[0].set_xlabel("Mean Sequence Length")
+
+    sns.histplot(data=df["response_diversity"], ax=axes[1], kde=True)
+    axes[1].set_title("Response Diversity Distribution")
+    axes[1].set_xlabel("Response Diversity")
+
+    plt.tight_layout()
+    plt.savefig("sequence_metrics_analysis.png")
+    plt.close()
+
     # 5. Multiple Metric Comparison
     metrics_to_compare = [
         "predictive_entropy",
@@ -284,12 +322,35 @@ def create_visualizations(df: pd.DataFrame, output_prefix: str):
     plt.savefig(f"{output_prefix}_metrics_distribution.png")
     plt.close()
 
+    # Select key metrics from each category
+    key_metrics = {
+        "Semantic": ["semantic_agreement_score", "num_semantic_clusters"],
+        "Probability": ["max_logprob", "logprob_range"],
+        "Entailment": [
+            "context_answer_entailment_gap",
+            "high_confidence_entailment",
+        ],
+        "Sequence": ["mean_sequence_length", "response_diversity"],
+    }
+
+    # Create correlation matrix for these metrics
+    selected_metrics = [m for metrics in key_metrics.values() for m in metrics]
+    correlation_matrix = df[selected_metrics].corr()
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
+    plt.title("Cross-Category Metric Correlations")
+    plt.tight_layout()
+    plt.savefig("comprehensive_metric_relationships.png")
+    plt.close()
+
     # 6. Sequence Length vs Log Probability
     plt.figure(figsize=(10, 6))
     sns.scatterplot(data=df, x="mean_sequence_length", y="max_logprob", alpha=0.6)
     plt.title("Sequence Length vs Maximum Log Probability")
     plt.savefig(f"{output_prefix}_length_vs_probability.png")
     plt.close()
+
 
 
 def main():
