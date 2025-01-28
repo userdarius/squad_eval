@@ -353,9 +353,8 @@ def main():
         # Load models and tokenizer
         logging.info("Loading models and tokenizer")
         target_model_name = "meta-llama/Llama-3.2-3B-Instruct"
-        approx_model_name = (
-            "meta-llama/Llama-3.2-1B-Instruct"  # Smaller model for approximation
-        )
+        approx_model_name = "meta-llama/Llama-3.2-1B-Instruct"
+
         approx_model, target_model, tokenizer = (
             load_approx_and_target_model_and_tokenizer(
                 approx_model_name, target_model_name
