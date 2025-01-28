@@ -14,6 +14,8 @@ import pandas as pd
 import json
 from model import (
     load_model_and_tokenizer,
+    load_approx_and_target_model_and_tokenizer,
+    speculative_sampling,
     EntailmentDeberta,
 )
 from data import get_dataset
@@ -27,8 +29,19 @@ from typing import List, Dict
 import torch.nn.functional as F
 
 
-def generate_answers(model, tokenizer, question, context, answer, num_samples=10):
-    """Generate multiple answers for a given question and context."""
+def generate_answers_with_spec_sampling(
+    approx_model,
+    target_model,
+    tokenizer,
+    question,
+    context,
+    answer,
+    num_samples=10,
+    max_new_tokens=10,
+    gamma=4,
+    temperature=0.4,
+):
+    """Generate multiple answers using speculative sampling."""
     prompt = f"Answer as simply as possible. Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     logging.info(f"Context: {context} \n\nQuestion: {question} \n\nAnswer: {answer}")
 
@@ -37,67 +50,57 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
     log_probs = []
     confidence_scores = []
 
-    for _ in range(num_samples):
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    # Encode the prompt
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(target_model.device)
 
+    for _ in range(num_samples):
+        # Generate sequence using speculative sampling
         with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=10,
-                num_return_sequences=1,
-                output_scores=True,
-                return_dict_in_generate=True,
-                no_repeat_ngram_size=3,
-                length_penalty=1.2,
-                temperature=0.4,
+            output_sequence, sequence_log_probs = speculative_sampling(
+                prefix=input_ids,
+                approx_model=approx_model,
+                target_model=target_model,
+                max_len=max_new_tokens,
+                gamma=gamma,
+                temperature=temperature,
                 top_p=0.9,
-                pad_token_id=tokenizer.pad_token_id,
+                verbose=False,
             )
 
-        # Get generated text
-        generated_sequence = outputs.sequences[0]
-        generated_text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-        answer = generated_text[len(prompt):].strip()
+        # Decode generated sequence
+        generated_text = tokenizer.decode(output_sequence[0], skip_special_tokens=True)
+        answer = generated_text[len(prompt) :].strip()
 
         # Post-process answer
         for stop_token in stopping_tokens:
             if stop_token in answer:
-                answer = answer[:answer.index(stop_token) + len(stop_token)]
+                answer = answer[: answer.index(stop_token) + len(stop_token)]
                 break
 
-        # Calculate sequence log probability and confidence score
-        scores = torch.stack(outputs.scores, dim=1)
-        sequence = outputs.sequences[0, inputs["input_ids"].size(1):]  # Only get new tokens
-        seq_length = sequence.size(0)
+        # Calculate sequence-level metrics
+        if len(sequence_log_probs) > 0:
+            # Sum log probabilities for the sequence
+            sequence_log_prob = sum(sequence_log_probs)
 
-        if seq_length > 0:
-            log_probs_per_token = []
-            confidence_per_token = []
+            # Calculate confidence as difference between top token probabilities
+            confidence_scores_per_token = []
+            for log_prob in sequence_log_probs:
+                # Convert log prob to probability
+                prob = torch.exp(torch.tensor(log_prob))
+                # Use a simple confidence metric based on probability
+                confidence = prob.item()
+                confidence_scores_per_token.append(confidence)
 
-            for i in range(min(seq_length, scores.size(1))):
-                # Calculate token probabilities
-                token_probs = F.softmax(scores[0, i], dim=-1)
-                top_probs, _ = torch.topk(token_probs, k=2)
-
-                # Calculate confidence as prob difference (like branching)
-                token_confidence = (top_probs[0] - top_probs[1]).item()
-                confidence_per_token.append(token_confidence)
-
-                # Calculate log probability
-                token_log_probs = F.log_softmax(scores[0, i], dim=-1)
-                token_log_prob = token_log_probs[sequence[i]].item()
-                log_probs_per_token.append(token_log_prob)
-
-            # Use raw sum instead of normalized average
-            sequence_log_prob = sum(log_probs_per_token)  # Removed normalization
-            avg_confidence = sum(confidence_per_token) / len(confidence_per_token)  # Keep confidence normalized
+            avg_confidence = sum(confidence_scores_per_token) / len(
+                confidence_scores_per_token
+            )
 
             answers.append(answer)
             log_probs.append(sequence_log_prob)
             confidence_scores.append(avg_confidence)
 
             logging.info(f"Generated answer: {answer}")
-            logging.info(f"Raw log probability: {sequence_log_prob}")  # Updated log message
+            logging.info(f"Raw log probability: {sequence_log_prob}")
             logging.info(f"Confidence score: {avg_confidence}")
 
     return answers, confidence_scores, log_probs
@@ -108,50 +111,29 @@ def normalize_answer(text):
     return text.rstrip(".")
 
 
-def evaluate_sample(sample, model, tokenizer, entailment_model):
-    """Evaluate semantic uncertainty metrics for a single sample."""
-    answers, confidence_scores, log_probs = generate_answers(
-        model,
+def evaluate_sample(sample, approx_model, target_model, tokenizer, entailment_model):
+    """Evaluate semantic uncertainty metrics for a single sample using speculative sampling."""
+    answers, confidence_scores, log_probs = generate_answers_with_spec_sampling(
+        approx_model,
+        target_model,
         tokenizer,
         sample["question"],
         sample["context"],
         sample["answers"]["text"][0],
     )
 
-    # Normalize answers
+    # Rest of the evaluation remains the same
     answers = [normalize_answer(answer) for answer in answers]
-
-    # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
 
-    # Calculate metrics
     pred_entropy = predictive_entropy(np.array(log_probs))
-    print(f"Predictive entropy: {pred_entropy}")
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
-    print(f"Cluster assignment entropy: {cluster_entropy}")
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
     )
     answer_entailment_score = context_entails_response(
         sample["answers"]["text"][0], answers, entailment_model
     )
-
-    # Print entailment scores (existing logic)
-    print(f"Context entailment score: {context_entailment_score}")
-    if context_entailment_score == 0:
-        print(f"Contradiction")
-    elif context_entailment_score == 1:
-        print(f"Neutral")
-    else:
-        print(f"Entailment")
-
-    print(f"Answer entailment score: {answer_entailment_score}")
-    if answer_entailment_score == 0:
-        print(f"Contradiction")
-    elif answer_entailment_score == 1:
-        print(f"Neutral")
-    else:
-        print(f"Entailment")
 
     semantic_cluster_counts = np.bincount(semantic_ids)
 
@@ -352,7 +334,6 @@ def create_visualizations(df: pd.DataFrame, output_prefix: str):
     plt.close()
 
 
-
 def main():
     # Setup logging
     logging.basicConfig(
@@ -366,21 +347,26 @@ def main():
         ],
     )
 
-    logging.info("Starting semantic entropy evaluation")
+    logging.info("Starting semantic entropy evaluation with speculative sampling")
 
     try:
         # Load models and tokenizer
         logging.info("Loading models and tokenizer")
-        model_name = "meta-llama/Llama-3.1-8B-Instruct"
-        model, tokenizer = load_model_and_tokenizer(model_name)
+        target_model_name = "meta-llama/Llama-3.2-3B-Instruct"
+        approx_model_name = (
+            "meta-llama/Llama-3.2-1B-Instruct"  # Smaller model for approximation
+        )
+        approx_model, target_model, tokenizer = (
+            load_approx_and_target_model_and_tokenizer(
+                approx_model_name, target_model_name
+            )
+        )
         entailment_model = EntailmentDeberta()
         logging.info("Models loaded successfully")
 
         # Load dataset
         logging.info("Loading squad dataset")
-        dataset = get_dataset("squad")[
-            "validation"
-        ]  # Using validation set for evaluation
+        dataset = get_dataset("squad")["validation"]
         logging.info(f"Dataset loaded successfully with {len(dataset)} samples")
 
         # Shuffle the dataset
@@ -391,11 +377,13 @@ def main():
 
         # Process samples
         for idx, sample in enumerate(tqdm(shuffled_dataset)):
-            if idx >= 500:  # Limit to 10 samples for testing
+            if idx >= 500:  # Limit to 500 samples
                 break
 
             try:
-                result = evaluate_sample(sample, model, tokenizer, entailment_model)
+                result = evaluate_sample(
+                    sample, approx_model, target_model, tokenizer, entailment_model
+                )
                 results.append(result)
 
                 if (idx + 1) % 10 == 0:
@@ -407,7 +395,7 @@ def main():
                 continue
 
         # Save results
-        output_file = f"semantic_uncertainty_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        output_file = f"semantic_uncertainty_results_spec_sampling_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         metrics = save_results(results, output_file)
         logging.info(f"Results saved to {output_file}")
         logging.info(f"Summary metrics: {metrics}")
