@@ -114,6 +114,17 @@ def normalize_answer(text):
     return text.rstrip(".")
 
 
+def normalize_answer(text):
+    """Normalize answer text by removing articles, punctuation, and extra whitespace"""
+    text = text.lower()
+    text = ''.join(char for char in text if char.isalnum() or char.isspace())
+    text = ' '.join(text.split())  # Normalize whitespace
+    return text
+
+def compute_exact_match(prediction, ground_truth):
+    """Compute exact match after normalization"""
+    return int(normalize_answer(prediction) == normalize_answer(ground_truth))
+
 def evaluate_sample(sample, model, tokenizer, entailment_model):
     """Evaluate semantic uncertainty metrics for a single sample."""
     answers, confidence_scores, log_probs = generate_answers(
@@ -126,38 +137,24 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
 
     # Normalize answers
     answers = [normalize_answer(answer) for answer in answers]
+    ground_truth = normalize_answer(sample["answers"]["text"][0])
+
+    # Calculate exact match scores
+    exact_matches = [compute_exact_match(answer, ground_truth) for answer in answers]
+    exact_match_accuracy = sum(exact_matches) / len(exact_matches)
 
     # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
 
     # Calculate metrics
     pred_entropy = predictive_entropy(np.array(log_probs))
-    print(f"Predictive entropy: {pred_entropy}")
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
-    print(f"Cluster assignment entropy: {cluster_entropy}")
     context_entailment_score = context_entails_response(
         sample["context"], answers, entailment_model
     )
     answer_entailment_score = context_entails_response(
         sample["answers"]["text"][0], answers, entailment_model
     )
-
-    # Print entailment scores (existing logic)
-    print(f"Context entailment score: {context_entailment_score}")
-    if context_entailment_score == 0:
-        print(f"Contradiction")
-    elif context_entailment_score == 1:
-        print(f"Neutral")
-    else:
-        print(f"Entailment")
-
-    print(f"Answer entailment score: {answer_entailment_score}")
-    if answer_entailment_score == 0:
-        print(f"Contradiction")
-    elif answer_entailment_score == 1:
-        print(f"Neutral")
-    else:
-        print(f"Entailment")
 
     semantic_cluster_counts = np.bincount(semantic_ids)
 
@@ -167,6 +164,8 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "context": sample["context"],
         "generated_answers": answers,
         "ground_truth": sample["answers"]["text"][0],
+        "exact_match_accuracy": float(exact_match_accuracy),
+        "exact_matches": exact_matches,
         "predictive_entropy": float(pred_entropy),
         "cluster_entropy": float(cluster_entropy),
         "context_entailment_score": float(context_entailment_score),
@@ -197,15 +196,21 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         ),
         "high_confidence_entailment": (
             float(
-                np.mean(
-                    [
-                        c
-                        for c, s in zip(confidence_scores, semantic_ids)
-                        if s == semantic_ids[0]
-                    ]
-                )
+                # Get the mean exact match score for the top 50% most confident answers
+                np.mean([
+                    match for conf, match in sorted(
+                        zip(confidence_scores, exact_matches),
+                        key=lambda x: x[0],  # Sort by confidence
+                        reverse=True  # Highest confidence first
+                    )[:len(confidence_scores)//2]  # Take top half
+                ])
             )
-            if semantic_ids
+            if confidence_scores
+            else 0.0
+        ),
+        "exact_match_confidence_correlation": (
+            float(np.corrcoef(exact_matches, confidence_scores)[0, 1])
+            if len(exact_matches) > 1 and len(set(exact_matches)) > 1
             else 0.0
         ),
     }
@@ -214,32 +219,35 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
 def save_results(results: List[Dict], output_file: str) -> Dict:
     """Save evaluation results in a JSON file with mean results and individual samples."""
     df = pd.DataFrame(results)
-
+    
     # Calculate mean and std for all numeric columns
     numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
     mean_results = {}
-
+    
     for col in numeric_columns:
         if col == "question_id":
             continue
         if df[col].isna().all():
             logging.warning(f"Skipping column {col} with all NaN values")
             continue
-
+        
         mean_val = df[col].mean()
         std_val = df[col].std()
         mean_results[col] = {
             "mean": float(mean_val) if not pd.isna(mean_val) else None,
-            "std": float(std_val) if not pd.isna(std_val) else None,
+            "std": float(std_val) if not pd.isna(std_val) else None
         }
-
+    
     # Create the combined JSON structure
-    output_json = {"mean_results": mean_results, "samples": results}
-
-    # Save to JSON file
-    with open(output_file, "w") as f:
+    output_json = {
+        "mean_results": mean_results,
+        "samples": results
+    }
+    
+    # Save to JSON file with UTF-8 encoding
+    with open(output_file, "w", encoding="utf-8") as f:  # Explicit encoding
         json.dump(output_json, f, indent=2, ensure_ascii=False)
-
+    
     return mean_results
 
 
