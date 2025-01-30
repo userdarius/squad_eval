@@ -29,7 +29,7 @@ from scores import (
     predictive_entropy,
     cluster_assignment_entropy,
 )
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 
 def generate_answers(
@@ -103,8 +103,16 @@ def generate_answers(
 
 
 def normalize_answer(text):
-    """Normalize answer text by removing periods and extra whitespace"""
-    return text.rstrip(".")
+    """Normalize answer text by removing articles, punctuation, and extra whitespace"""
+    text = text.lower()
+    text = "".join(char for char in text if char.isalnum() or char.isspace())
+    text = " ".join(text.split())  # Normalize whitespace
+    return text
+
+
+def compute_exact_match(prediction, ground_truth):
+    """Compute exact match after normalization"""
+    return int(normalize_answer(prediction) == normalize_answer(ground_truth))
 
 
 def evaluate_sample(sample, model, tokenizer, entailment_model):
@@ -119,11 +127,16 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
 
     # Normalize answers
     answers = [normalize_answer(answer) for answer in answers]
+    ground_truth = normalize_answer(sample["answers"]["text"][0])
+
+    # Calculate exact match scores
+    exact_matches = [compute_exact_match(answer, ground_truth) for answer in answers]
+    exact_match_accuracy = sum(exact_matches) / len(exact_matches)
 
     # Calculate semantic IDs
     semantic_ids = get_semantic_ids(answers, entailment_model)
 
-    # Basic metrics (existing)
+    # Basic metrics
     pred_entropy = predictive_entropy(np.array(log_probs))
     cluster_entropy = cluster_assignment_entropy(semantic_ids)
     context_entailment_score = context_entails_response(
@@ -133,7 +146,7 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         sample["answers"]["text"][0], answers, entailment_model
     )
 
-    # Print entailment scores (existing logic)
+    # Print entailment scores
     print(f"Context entailment score: {context_entailment_score}")
     if context_entailment_score == 0:
         print(f"Contradiction")
@@ -150,215 +163,110 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
     else:
         print(f"Entailment")
 
-    # New metrics calculation
+    # Calculate all metrics
     semantic_cluster_counts = np.bincount(semantic_ids)
-
-    # Calculate all new metrics
-    new_metrics = {
-        # Sequence-Level Metrics
-        "mean_sequence_length": np.mean([len(a.split()) for a in answers]),
-        "response_diversity": len(set(answers)) / len(answers),
-        "max_logprob": max(log_probs),
-        "min_logprob": min(log_probs),
-        "logprob_range": max(log_probs) - min(log_probs),
-        # Cluster Analysis
-        "num_semantic_clusters": len(set(semantic_ids)),
-        "largest_cluster_size": max(semantic_cluster_counts),
-        "cluster_size_std": np.std(semantic_cluster_counts),
-        # Agreement Metrics
-        "majority_answer_frequency": max(semantic_cluster_counts) / len(semantic_ids),
-        "semantic_agreement_score": len(set(semantic_ids)) / len(answers),
-        # Correlation Analysis
-        "logprob_confidence_correlation": np.corrcoef(log_probs, confidence_scores)[
-            0, 1
-        ],
-        "entropy_cluster_correlation": abs(pred_entropy - cluster_entropy),
-        # Consistency Metrics
-        "context_answer_entailment_gap": abs(
-            context_entailment_score - answer_entailment_score
-        ),
-        "high_confidence_entailment": np.mean(
-            [c for c, s in zip(confidence_scores, semantic_ids) if s == semantic_ids[0]]
-        ),
-    }
-
-    # Combine existing and new metrics in return dictionary
-    return {
-        # Existing metrics
+    metrics = {
+        # Basic Information
         "question_id": sample["id"],
         "question": sample["question"],
         "context": sample["context"],
         "generated_answers": answers,
         "ground_truth": sample["answers"]["text"][0],
-        "predictive_entropy": pred_entropy,
-        "cluster_entropy": cluster_entropy,
-        "context_entailment_score": context_entailment_score,
-        "answer_entailment_score": answer_entailment_score,
-        "semantic_clusters": semantic_ids,
+        # Exact Match Metrics
+        "exact_match_accuracy": float(exact_match_accuracy),
+        "exact_matches": exact_matches,
+        "exact_match_confidence_correlation": (
+            float(np.corrcoef(exact_matches, confidence_scores)[0, 1])
+            if len(exact_matches) > 1 and len(set(exact_matches)) > 1
+            else 0.0
+        ),
+        # Basic Metrics
+        "predictive_entropy": float(pred_entropy),
+        "cluster_entropy": float(cluster_entropy),
+        "context_entailment_score": float(context_entailment_score),
+        "answer_entailment_score": float(answer_entailment_score),
+        "semantic_clusters": semantic_ids.tolist(),
         "confidence_scores": confidence_scores,
         "log_probabilities": log_probs,
-        # Add all new metrics
-        **new_metrics,
+        # Sequence-Level Metrics
+        "mean_sequence_length": float(np.mean([len(a.split()) for a in answers])),
+        "response_diversity": float(len(set(answers)) / len(answers)),
+        "max_logprob": float(max(log_probs)),
+        "min_logprob": float(min(log_probs)),
+        "logprob_range": float(max(log_probs) - min(log_probs)),
+        # Cluster Analysis
+        "num_semantic_clusters": int(len(set(semantic_ids))),
+        "largest_cluster_size": int(max(semantic_cluster_counts)),
+        "cluster_size_std": float(np.std(semantic_cluster_counts)),
+        # Agreement Metrics
+        "majority_answer_frequency": float(
+            max(semantic_cluster_counts) / len(semantic_ids)
+        ),
+        "semantic_agreement_score": float(len(set(semantic_ids)) / len(answers)),
+        # Correlation Analysis
+        "logprob_confidence_correlation": float(
+            np.corrcoef(log_probs, confidence_scores)[0, 1]
+            if len(log_probs) > 1
+            else 0.0
+        ),
+        "entropy_cluster_correlation": float(abs(pred_entropy - cluster_entropy)),
+        # Consistency Metrics
+        "context_answer_entailment_gap": float(
+            abs(context_entailment_score - answer_entailment_score)
+        ),
+        # High Confidence Metrics
+        "high_confidence_entailment": float(
+            # Get the mean exact match score for the top 50% most confident answers
+            np.mean(
+                [
+                    match
+                    for conf, match in sorted(
+                        zip(confidence_scores, exact_matches),
+                        key=lambda x: x[0],  # Sort by confidence
+                        reverse=True,  # Highest confidence first
+                    )[
+                        : len(confidence_scores) // 2
+                    ]  # Take top half
+                ]
+            )
+            if confidence_scores
+            else 0.0
+        ),
     }
-
-
-def save_results(results, output_file):
-    """Save evaluation results to a file."""
-    df = pd.DataFrame(results)
-    df.to_csv(output_file, index=False)
-
-    # Calculate and log summary statistics for all numeric columns
-    numeric_columns = df.select_dtypes(include=[np.number]).columns
-    metrics = {
-        f"mean_{col}": df[col].mean()
-        for col in numeric_columns
-        if col not in ["question_id"] and not df[col].isna().all()
-    }
-
-    # Add standard deviations for key metrics
-    metrics.update(
-        {
-            f"std_{col}": df[col].std()
-            for col in numeric_columns
-            if col not in ["question_id"] and not df[col].isna().all()
-        }
-    )
-
-    with open(output_file.replace(".csv", "_summary.json"), "w") as f:
-        json.dump(metrics, f, indent=2)
-
-    output_prefix = output_file.replace(".csv", "")
-    create_visualizations(df, output_prefix)
 
     return metrics
 
 
-def create_visualizations(df: pd.DataFrame, output_prefix: str):
-    """Create and save various visualizations from the results DataFrame."""
+def save_results(results: List[Dict], output_file: str) -> Dict:
+    """Save evaluation results in a JSON file with mean results and individual samples."""
+    df = pd.DataFrame(results)
 
-    # Set up the style
-    plt.style.use("seaborn")
+    # Calculate mean and std for all numeric columns
+    numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+    mean_results = {}
 
-    # 1. Correlation Heatmap of Numeric Metrics
-    plt.figure(figsize=(12, 10))
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    correlation_matrix = df[numeric_cols].corr()
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
-    plt.title("Correlation Between Uncertainty Metrics")
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}_correlation_heatmap.png")
-    plt.close()
+    for col in numeric_columns:
+        if col == "question_id":
+            continue
+        if df[col].isna().all():
+            logging.warning(f"Skipping column {col} with all NaN values")
+            continue
 
-    # 2. Joint Plot of Entropies
-    plt.figure(figsize=(10, 6))
-    sns.jointplot(
-        data=df,
-        x="predictive_entropy",
-        y="cluster_entropy",
-        kind="scatter",
-        joint_kws={"alpha": 0.5},
-    )
-    plt.suptitle("Relationship Between Predictive and Cluster Entropy")
-    plt.savefig(f"{output_prefix}_entropy_relationship.png")
-    plt.close()
+        mean_val = df[col].mean()
+        std_val = df[col].std()
+        mean_results[col] = {
+            "mean": float(mean_val) if not pd.isna(mean_val) else None,
+            "std": float(std_val) if not pd.isna(std_val) else None,
+        }
 
-    # 3. Distribution of Semantic Clusters
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(data=df, y="num_semantic_clusters")
-    plt.title("Distribution of Number of Semantic Clusters")
-    plt.savefig(f"{output_prefix}_semantic_clusters_dist.png")
-    plt.close()
+    # Create the combined JSON structure
+    output_json = {"mean_results": mean_results, "samples": results}
 
-    # 4. Confidence vs Agreement Plot
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(
-        data=df, x="high_confidence_entailment", y="semantic_agreement_score", alpha=0.6
-    )
-    plt.title("Confidence vs Semantic Agreement")
-    plt.xlabel("High Confidence Entailment")
-    plt.ylabel("Semantic Agreement Score")
-    plt.savefig(f"{output_prefix}_confidence_agreement.png")
-    plt.close()
+    # Save to JSON file with UTF-8 encoding
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output_json, f, indent=2, ensure_ascii=False)
 
-    # Entailment-based metrics
-    plt.figure(figsize=(12, 8))
-
-    metrics = [
-        "context_answer_entailment_gap",
-        "high_confidence_entailment",
-        "entropy_cluster_correlation",
-    ]
-
-    plt.figure(figsize=(15, 5))
-    for idx, metric in enumerate(metrics, 1):
-        plt.subplot(1, 3, idx)
-        sns.kdeplot(data=df[metric], fill=True)
-        plt.title(f"{metric} Distribution")
-        plt.xlabel(metric)
-
-    plt.tight_layout()
-    plt.savefig("entailment_analysis.png")
-    plt.close()
-
-    # Sequence-based metrics
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Sequence Metrics Analysis")
-
-    sns.boxplot(data=df["mean_sequence_length"], ax=axes[0])
-    axes[0].set_title("Mean Sequence Length Distribution")
-    axes[0].set_xlabel("Mean Sequence Length")
-
-    sns.histplot(data=df["response_diversity"], ax=axes[1], kde=True)
-    axes[1].set_title("Response Diversity Distribution")
-    axes[1].set_xlabel("Response Diversity")
-
-    plt.tight_layout()
-    plt.savefig("sequence_metrics_analysis.png")
-    plt.close()
-
-    # 5. Multiple Metric Comparison
-    metrics_to_compare = [
-        "predictive_entropy",
-        "cluster_entropy",
-        "context_answer_entailment_gap",
-        "response_diversity",
-    ]
-    plt.figure(figsize=(12, 6))
-    df[metrics_to_compare].boxplot()
-    plt.xticks(rotation=45)
-    plt.title("Distribution of Key Uncertainty Metrics")
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}_metrics_distribution.png")
-    plt.close()
-
-    # Select key metrics from each category
-    key_metrics = {
-        "Semantic": ["semantic_agreement_score", "num_semantic_clusters"],
-        "Probability": ["max_logprob", "logprob_range"],
-        "Entailment": [
-            "context_answer_entailment_gap",
-            "high_confidence_entailment",
-        ],
-        "Sequence": ["mean_sequence_length", "response_diversity"],
-    }
-
-    # Create correlation matrix for these metrics
-    selected_metrics = [m for metrics in key_metrics.values() for m in metrics]
-    correlation_matrix = df[selected_metrics].corr()
-
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
-    plt.title("Cross-Category Metric Correlations")
-    plt.tight_layout()
-    plt.savefig("comprehensive_metric_relationships.png")
-    plt.close()
-
-    # 6. Sequence Length vs Log Probability
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x="mean_sequence_length", y="max_logprob", alpha=0.6)
-    plt.title("Sequence Length vs Maximum Log Probability")
-    plt.savefig(f"{output_prefix}_length_vs_probability.png")
-    plt.close()
+    return mean_results
 
 
 def main():
@@ -417,7 +325,7 @@ def main():
                 continue
 
         # Save results
-        output_file = f"semantic_uncertainty_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        output_file = f"semantic_uncertainty_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         metrics = save_results(results, output_file)
         logging.info(f"Results saved to {output_file}")
         logging.info(f"Summary metrics: {metrics}")
