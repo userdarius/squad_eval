@@ -57,17 +57,19 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
         # Get generated text
         generated_sequence = outputs.sequences[0]
         generated_text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-        answer = generated_text[len(prompt):].strip()
+        answer = generated_text[len(prompt) :].strip()
 
         # Post-process answer
         for stop_token in stopping_tokens:
             if stop_token in answer:
-                answer = answer[:answer.index(stop_token) + len(stop_token)]
+                answer = answer[: answer.index(stop_token) + len(stop_token)]
                 break
 
         # Calculate sequence log probability and confidence score
         scores = torch.stack(outputs.scores, dim=1)
-        sequence = outputs.sequences[0, inputs["input_ids"].size(1):]  # Only get new tokens
+        sequence = outputs.sequences[
+            0, inputs["input_ids"].size(1) :
+        ]  # Only get new tokens
         seq_length = sequence.size(0)
 
         if seq_length > 0:
@@ -90,14 +92,18 @@ def generate_answers(model, tokenizer, question, context, answer, num_samples=10
 
             # Use raw sum instead of normalized average
             sequence_log_prob = sum(log_probs_per_token)  # Removed normalization
-            avg_confidence = sum(confidence_per_token) / len(confidence_per_token)  # Keep confidence normalized
+            avg_confidence = sum(confidence_per_token) / len(
+                confidence_per_token
+            )  # Keep confidence normalized
 
             answers.append(answer)
             log_probs.append(sequence_log_prob)
             confidence_scores.append(avg_confidence)
 
             logging.info(f"Generated answer: {answer}")
-            logging.info(f"Raw log probability: {sequence_log_prob}")  # Updated log message
+            logging.info(
+                f"Raw log probability: {sequence_log_prob}"
+            )  # Updated log message
             logging.info(f"Confidence score: {avg_confidence}")
 
     return answers, confidence_scores, log_probs
@@ -161,196 +167,80 @@ def evaluate_sample(sample, model, tokenizer, entailment_model):
         "context": sample["context"],
         "generated_answers": answers,
         "ground_truth": sample["answers"]["text"][0],
-        "predictive_entropy": pred_entropy,
-        "cluster_entropy": cluster_entropy,
-        "context_entailment_score": context_entailment_score,
-        "answer_entailment_score": answer_entailment_score,
+        "predictive_entropy": float(pred_entropy),
+        "cluster_entropy": float(cluster_entropy),
+        "context_entailment_score": float(context_entailment_score),
+        "answer_entailment_score": float(answer_entailment_score),
         "semantic_clusters": semantic_ids,
         "confidence_scores": confidence_scores,
         "log_probabilities": log_probs,
-        "mean_sequence_length": np.mean([len(a.split()) for a in answers]),
+        "mean_sequence_length": float(np.mean([len(a.split()) for a in answers])),
         "response_diversity": len(set(answers)) / len(answers),
-        "max_logprob": max(log_probs),
-        "min_logprob": min(log_probs),
-        "logprob_range": max(log_probs) - min(log_probs),
+        "max_logprob": max(log_probs) if log_probs else 0.0,
+        "min_logprob": min(log_probs) if log_probs else 0.0,
+        "logprob_range": (max(log_probs) - min(log_probs)) if log_probs else 0.0,
         "num_semantic_clusters": len(set(semantic_ids)),
-        "largest_cluster_size": max(semantic_cluster_counts),
-        "cluster_size_std": np.std(semantic_cluster_counts),
-        "majority_answer_frequency": max(semantic_cluster_counts) / len(semantic_ids),
-        "semantic_agreement_score": len(set(semantic_ids)) / len(answers),
-        "logprob_confidence_correlation": np.corrcoef(log_probs, confidence_scores)[
-            0, 1
-        ],
-        "entropy_cluster_correlation": abs(pred_entropy - cluster_entropy),
-        "context_answer_entailment_gap": abs(
-            context_entailment_score - answer_entailment_score
+        "largest_cluster_size": int(max(semantic_cluster_counts)),
+        "cluster_size_std": float(np.std(semantic_cluster_counts)),
+        "majority_answer_frequency": float(
+            max(semantic_cluster_counts) / len(semantic_ids)
         ),
-        "high_confidence_entailment": np.mean(
-            [c for c, s in zip(confidence_scores, semantic_ids) if s == semantic_ids[0]]
+        "semantic_agreement_score": len(set(semantic_ids)) / len(answers),
+        "logprob_confidence_correlation": (
+            float(np.corrcoef(log_probs, confidence_scores)[0, 1])
+            if len(log_probs) > 1
+            else 0.0
+        ),
+        "entropy_cluster_correlation": float(abs(pred_entropy - cluster_entropy)),
+        "context_answer_entailment_gap": float(
+            abs(context_entailment_score - answer_entailment_score)
+        ),
+        "high_confidence_entailment": (
+            float(
+                np.mean(
+                    [
+                        c
+                        for c, s in zip(confidence_scores, semantic_ids)
+                        if s == semantic_ids[0]
+                    ]
+                )
+            )
+            if semantic_ids
+            else 0.0
         ),
     }
 
 
 def save_results(results: List[Dict], output_file: str) -> Dict:
-    """Save evaluation results and create visualizations."""
+    """Save evaluation results in a JSON file with mean results and individual samples."""
     df = pd.DataFrame(results)
-    df.to_csv(output_file, index=False)
 
-    # Calculate summary statistics for all numeric columns
-    numeric_columns = df.select_dtypes(include=[np.number]).columns
-    metrics = {
-        f"mean_{col}": df[col].mean()
-        for col in numeric_columns
-        if col not in ["question_id"] and not df[col].isna().all()
-    }
+    # Calculate mean and std for all numeric columns
+    numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+    mean_results = {}
 
-    # Add standard deviations
-    metrics.update(
-        {
-            f"std_{col}": df[col].std()
-            for col in numeric_columns
-            if col not in ["question_id"] and not df[col].isna().all()
+    for col in numeric_columns:
+        if col == "question_id":
+            continue
+        if df[col].isna().all():
+            logging.warning(f"Skipping column {col} with all NaN values")
+            continue
+
+        mean_val = df[col].mean()
+        std_val = df[col].std()
+        mean_results[col] = {
+            "mean": float(mean_val) if not pd.isna(mean_val) else None,
+            "std": float(std_val) if not pd.isna(std_val) else None,
         }
-    )
 
-    # Save metrics
-    with open(output_file.replace(".csv", "_summary.json"), "w") as f:
-        json.dump(metrics, f, indent=2)
+    # Create the combined JSON structure
+    output_json = {"mean_results": mean_results, "samples": results}
 
-    # Create visualizations
-    output_prefix = output_file.replace(".csv", "")
-    create_visualizations(df, output_prefix)
+    # Save to JSON file
+    with open(output_file, "w") as f:
+        json.dump(output_json, f, indent=2, ensure_ascii=False)
 
-    return metrics
-
-
-def create_visualizations(df: pd.DataFrame, output_prefix: str):
-    """Create and save various visualizations from the results DataFrame."""
-
-    # Set up the style
-    plt.style.use("seaborn")
-
-    # 1. Correlation Heatmap of Numeric Metrics
-    plt.figure(figsize=(12, 10))
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    correlation_matrix = df[numeric_cols].corr()
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
-    plt.title("Correlation Between Uncertainty Metrics")
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}_correlation_heatmap.png")
-    plt.close()
-
-    # 2. Joint Plot of Entropies
-    plt.figure(figsize=(10, 6))
-    sns.jointplot(
-        data=df,
-        x="predictive_entropy",
-        y="cluster_entropy",
-        kind="scatter",
-        joint_kws={"alpha": 0.5},
-    )
-    plt.suptitle("Relationship Between Predictive and Cluster Entropy")
-    plt.savefig(f"{output_prefix}_entropy_relationship.png")
-    plt.close()
-
-    # 3. Distribution of Semantic Clusters
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(data=df, y="num_semantic_clusters")
-    plt.title("Distribution of Number of Semantic Clusters")
-    plt.savefig(f"{output_prefix}_semantic_clusters_dist.png")
-    plt.close()
-
-    # 4. Confidence vs Agreement Plot
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(
-        data=df, x="high_confidence_entailment", y="semantic_agreement_score", alpha=0.6
-    )
-    plt.title("Confidence vs Semantic Agreement")
-    plt.xlabel("High Confidence Entailment")
-    plt.ylabel("Semantic Agreement Score")
-    plt.savefig(f"{output_prefix}_confidence_agreement.png")
-    plt.close()
-
-    # Entailment-based metrics
-    plt.figure(figsize=(12, 8))
-
-    metrics = [
-        "context_answer_entailment_gap",
-        "high_confidence_entailment",
-        "entropy_cluster_correlation",
-    ]
-
-    plt.figure(figsize=(15, 5))
-    for idx, metric in enumerate(metrics, 1):
-        plt.subplot(1, 3, idx)
-        sns.kdeplot(data=df[metric], fill=True)
-        plt.title(f"{metric} Distribution")
-        plt.xlabel(metric)
-
-    plt.tight_layout()
-    plt.savefig("entailment_analysis.png")
-    plt.close()
-
-    # Sequence-based metrics
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Sequence Metrics Analysis")
-
-    sns.boxplot(data=df["mean_sequence_length"], ax=axes[0])
-    axes[0].set_title("Mean Sequence Length Distribution")
-    axes[0].set_xlabel("Mean Sequence Length")
-
-    sns.histplot(data=df["response_diversity"], ax=axes[1], kde=True)
-    axes[1].set_title("Response Diversity Distribution")
-    axes[1].set_xlabel("Response Diversity")
-
-    plt.tight_layout()
-    plt.savefig("sequence_metrics_analysis.png")
-    plt.close()
-
-    # 5. Multiple Metric Comparison
-    metrics_to_compare = [
-        "predictive_entropy",
-        "cluster_entropy",
-        "context_answer_entailment_gap",
-        "response_diversity",
-    ]
-    plt.figure(figsize=(12, 6))
-    df[metrics_to_compare].boxplot()
-    plt.xticks(rotation=45)
-    plt.title("Distribution of Key Uncertainty Metrics")
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}_metrics_distribution.png")
-    plt.close()
-
-    # Select key metrics from each category
-    key_metrics = {
-        "Semantic": ["semantic_agreement_score", "num_semantic_clusters"],
-        "Probability": ["max_logprob", "logprob_range"],
-        "Entailment": [
-            "context_answer_entailment_gap",
-            "high_confidence_entailment",
-        ],
-        "Sequence": ["mean_sequence_length", "response_diversity"],
-    }
-
-    # Create correlation matrix for these metrics
-    selected_metrics = [m for metrics in key_metrics.values() for m in metrics]
-    correlation_matrix = df[selected_metrics].corr()
-
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", center=0)
-    plt.title("Cross-Category Metric Correlations")
-    plt.tight_layout()
-    plt.savefig("comprehensive_metric_relationships.png")
-    plt.close()
-
-    # 6. Sequence Length vs Log Probability
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x="mean_sequence_length", y="max_logprob", alpha=0.6)
-    plt.title("Sequence Length vs Maximum Log Probability")
-    plt.savefig(f"{output_prefix}_length_vs_probability.png")
-    plt.close()
-
+    return mean_results
 
 
 def main():
@@ -407,7 +297,7 @@ def main():
                 continue
 
         # Save results
-        output_file = f"semantic_uncertainty_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        output_file = f"semantic_uncertainty_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         metrics = save_results(results, output_file)
         logging.info(f"Results saved to {output_file}")
         logging.info(f"Summary metrics: {metrics}")
